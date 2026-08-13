@@ -1,0 +1,1 @@
+SIL OFL 1.1 — Instrument Serif, embedded as a data URI because the artifact CSP blocks font CDNs

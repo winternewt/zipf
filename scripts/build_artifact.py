@@ -4,6 +4,13 @@ Operational one-off. Every figure on the page is read from the parquet and JSON 
 wrote; nothing is transcribed by hand, so the page cannot drift from the run.
 
     uv run python scripts/build_artifact.py
+
+The display face is inlined as a data URI from `assets/`, because the artifact host's CSP
+blocks font CDNs and a linked webfont would fall back silently.
+
+The chart's two series colours were checked with the dataviz validator rather than chosen by
+eye — both themes pass the lightness band, chroma floor, CVD separation, normal-vision floor
+and contrast checks. Changing them means re-running that validator.
 """
 
 from __future__ import annotations
@@ -15,60 +22,59 @@ from datetime import UTC, datetime
 
 import polars as pl
 
-from zipf.harvest import DOCUMENTS_PARQUET
 from zipf.compare import (
     MAX_DISPERSION,
     MAX_SESSION_SHARE,
     MIN_SESSIONS,
     MIN_TARGET_COUNT,
-    Z_THRESHOLD,
     overused,
     underused,
 )
 from zipf.domain import DOMAIN_THRESHOLD, empirical_threshold
+from zipf.harvest import DOCUMENTS_PARQUET
 from zipf.models import REFERENCE_TIERS
 from zipf.nulltest import run_null_test
-from zipf.paths import OUTPUT_DIR
+from zipf.paths import ASSETS_DIR, OUTPUT_DIR
 from zipf.pipeline import meta_path
 
 GENERAL = ("literature", "reddit", "web")
 
 TIER_LABEL = {
     "literature": "Gutenberg",
-    "reddit": "Reddit 2010–12",
-    "technical": "StackOverflow",
-    "web": "Crawl 2021",
+    "reddit": "Reddit",
+    "technical": "Stack Overflow",
+    "web": "Common Crawl",
     "biomedical": "PubMed",
 }
 
+# --- palette -----------------------------------------------------------------------------
+# Neutrals are biased slightly toward the blue accent so they read as chosen rather than
+# inherited. The two series colours are validated; see the module docstring.
 LIGHT = {
-    "paper": "#F5F6F8",
+    "paper": "#F4F5F7",
     "panel": "#FFFFFF",
-    "ink": "#171B22",
-    "ink-soft": "#59636F",
-    "ink-faint": "#8B95A3",
-    "rule": "#DCE0E6",
-    "rule-strong": "#BFC7D1",
-    "heat": "#8A4B0F",
-    "heat-bar": "#C2822C",
-    "heat-track": "#E7E2D8",
-    "cool": "#2C5C6E",
-    "flag": "#8C2F26",
+    "ink": "#15181D",
+    "ink-soft": "#5A6470",
+    "ink-faint": "#8A94A1",
+    "rule": "#DEE2E7",
+    "rule-strong": "#C0C7D0",
+    "claude": "#B5521C",
+    "human": "#3560AB",
+    "claude-soft": "#EFE3D8",
+    "grid": "#E6E9ED",
 }
-
 DARK = {
-    "paper": "#0F1218",
-    "panel": "#161B23",
-    "ink": "#E6E9EE",
-    "ink-soft": "#9AA4B2",
-    "ink-faint": "#6C7684",
-    "rule": "#232935",
-    "rule-strong": "#39424F",
-    "heat": "#D9A050",
-    "heat-bar": "#B8823C",
-    "heat-track": "#272319",
-    "cool": "#74AEC3",
-    "flag": "#D07A6E",
+    "paper": "#101318",
+    "panel": "#171B22",
+    "ink": "#E7EAEE",
+    "ink-soft": "#98A2AF",
+    "ink-faint": "#69737F",
+    "rule": "#242A33",
+    "rule-strong": "#39414C",
+    "claude": "#D0793A",
+    "human": "#5A83CC",
+    "claude-soft": "#2A2018",
+    "grid": "#1E242C",
 }
 
 
@@ -84,34 +90,122 @@ def meta(corpus_id: str) -> dict:
     return json.loads(meta_path(corpus_id).read_text(encoding="utf-8"))
 
 
-def bar(ratio: float, *, decades: float = 4.0) -> str:
-    """Log-scaled magnitude bar: the ratios span four orders of magnitude."""
-    if not math.isfinite(ratio) or ratio <= 1:
-        width = 1.5
-    else:
-        width = max(1.5, min(100.0, math.log10(ratio) / decades * 100.0))
-    return f'<span class="bar"><i style="width:{width:.1f}%"></i></span>'
+def font_face() -> str:
+    """Inline the display face. A missing asset degrades to the system serif, not to silence."""
+    path = ASSETS_DIR / "instrument-serif.woff2.b64"
+    if not path.exists():
+        return ""
+    payload = path.read_text(encoding="utf-8").strip()
+    return (
+        "@font-face{font-family:'Display';font-style:normal;font-weight:400;"
+        f"font-display:swap;src:url(data:font/woff2;base64,{payload}) format('woff2');}}"
+    )
 
 
 def ratio_text(ratio: float) -> str:
     if not math.isfinite(ratio):
         return "&infin;"
-    if ratio >= 1000:
+    if ratio >= 100:
         return f"{ratio:,.0f}&times;"
     return f"{ratio:,.1f}&times;"
 
 
+def hardest_rate(row: dict, tiers: list[str]) -> float:
+    """The rate of whichever human corpus uses the word most — the toughest comparison."""
+    return max((row.get(f"per_million_{t}") or 0.0) for t in tiers)
+
+
 def word_ratio(row: dict, tiers: list[str]) -> float:
-    """Rate against the *toughest* baseline — whichever human corpus uses the word most."""
-    rates = [row.get(f"per_million_{t}") or 0.0 for t in tiers]
-    hardest = max(rates) if rates else 0.0
+    hardest = hardest_rate(row, tiers)
     return row["target_per_million"] / hardest if hardest > 0 else float("inf")
+
+
+# --- the chart ---------------------------------------------------------------------------
+
+
+def dumbbell(rows: list[dict], tiers: list[str], *, count: int = 18) -> str:
+    """A dumbbell chart: each word's human rate and Claude's rate, joined.
+
+    The form follows the job. There are two values per word and the *distance between them* is
+    the finding, which is what a dumbbell encodes directly and what a bar chart of ratios
+    throws away. The axis is logarithmic because the rates span four orders of magnitude; on a
+    linear axis every human rate would collapse onto the left edge.
+    """
+    # Rows keep the report's own ranking (minimum z), rather than being re-sorted by the ratio
+    # the chart draws. Sorting by ratio was tried and rejected: it promotes `rm`, `hf` and `dep`
+    # — technical abbreviations no human corpus contains, so their ratio is enormous and their
+    # evidence is thin. That is precisely why the method ranks by z, and a chart that contradicts
+    # its own report's ordering teaches the reader the wrong lesson about which words matter.
+    data = []
+    for row in rows[:count]:
+        human = hardest_rate(row, tiers)
+        claude = row["target_per_million"]
+        if human > 0 and claude > 0:
+            data.append((row["token"], human, claude, claude / human))
+    if not data:
+        return ""
+
+    row_height = 29
+    pad_top, pad_bottom = 16, 42
+    label_w, ratio_w, plot_w = 124, 62, 646
+    width = label_w + plot_w + ratio_w
+    height = pad_top + len(data) * row_height + pad_bottom
+
+    # The axis floor comes from the data. A fixed floor left half the plot empty, because no
+    # word in the set is as rare as one occurrence per ten million.
+    lo = max(0.05, min(h for _, h, _, _ in data) / 2.5)
+    hi = max(c for _, _, c, _ in data) * 1.6
+    log_lo, log_hi = math.log10(lo), math.log10(hi)
+
+    def x(value: float) -> float:
+        return label_w + (math.log10(max(value, lo)) - log_lo) / (log_hi - log_lo) * plot_w
+
+    parts = [
+        f'<svg viewBox="0 0 {width} {height}" width="100%" style="max-width:{width}px" '
+        'role="img" aria-label="For each word, the rate per million in the human corpus that '
+        'uses it most, and the rate in Claude Code prose.">'
+    ]
+
+    decade = math.ceil(log_lo)
+    while decade <= math.floor(math.log10(hi)):
+        gx = x(10**decade)
+        label = f"{10**decade:,.0f}" if decade >= 0 else f"{10**decade:g}"
+        parts.append(
+            f'<line x1="{gx:.1f}" y1="{pad_top - 4}" x2="{gx:.1f}" '
+            f'y2="{height - pad_bottom + 6}" stroke="var(--grid)" stroke-width="1"/>'
+            f'<text x="{gx:.1f}" y="{height - pad_bottom + 22}" class="axis" '
+            f'text-anchor="middle">{label}</text>'
+        )
+        decade += 1
+    parts.append(
+        f'<text x="{label_w + plot_w / 2:.0f}" y="{height - 6}" class="axis-title" '
+        'text-anchor="middle">occurrences per million words (log scale)</text>'
+    )
+
+    for i, (token, human, claude, ratio) in enumerate(data):
+        cy = pad_top + i * row_height + row_height / 2
+        hx, cx = x(human), x(claude)
+        parts.append(
+            f'<g class="dumb"><title>{esc(token)} — Claude {claude:,.0f} per million; '
+            f"toughest human corpus {human:,.1f} per million; {ratio:,.0f} times</title>"
+            f'<text x="{label_w - 12}" y="{cy + 4:.1f}" class="rowlabel" '
+            f'text-anchor="end">{esc(token)}</text>'
+            f'<line x1="{hx:.1f}" y1="{cy:.1f}" x2="{cx:.1f}" y2="{cy:.1f}" class="connector"/>'
+            f'<circle cx="{hx:.1f}" cy="{cy:.1f}" r="5" class="mark-human"/>'
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5.5" class="mark-claude"/>'
+            f'<text x="{width - 6}" y="{cy + 4:.1f}" class="rowratio" '
+            f'text-anchor="end">{ratio:,.0f}&#215;</text></g>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+# --- tables ------------------------------------------------------------------------------
 
 
 def word_rows(frame: pl.DataFrame, tiers: list[str], limit: int) -> str:
     out = []
     for i, row in enumerate(frame.head(limit).iter_rows(named=True), start=1):
-        ratio = word_ratio(row, tiers)
         cells = "".join(
             f'<td class="num soft">{(row.get(f"per_million_{t}") or 0.0):,.1f}</td>'
             for t in tiers
@@ -120,12 +214,27 @@ def word_rows(frame: pl.DataFrame, tiers: list[str], limit: int) -> str:
         spec_cell = "&mdash;" if spec is None or not math.isfinite(spec) else f"{spec:+.1f}"
         out.append(
             f"<tr><td class='rank'>{i}</td><td class='word'>{esc(row['token'])}</td>"
-            f"<td class='num strong'>{row['target_per_million']:,.0f}</td>{cells}"
-            f"<td class='num heat'>{ratio_text(ratio)}</td>"
-            f"<td class='barcell'>{bar(ratio)}</td>"
+            f"<td class='num claude'>{row['target_per_million']:,.0f}</td>{cells}"
+            f"<td class='num ratio'>{ratio_text(word_ratio(row, tiers))}</td>"
             f"<td class='num soft'>{row['z_min']:,.0f}</td>"
             f"<td class='num soft'>{spec_cell}</td>"
             f"<td class='num soft'>{(row.get('project_dp') or 0.0):.2f}</td>"
+            f"<td class='num soft'>{row['sessions_present']}</td></tr>"
+        )
+    return "\n".join(out)
+
+
+def ngram_rows(frame: pl.DataFrame, limit: int) -> str:
+    out = []
+    for i, row in enumerate(frame.head(limit).iter_rows(named=True), start=1):
+        best = row["best_reference_per_million"]
+        ratio = row["target_per_million"] / best if best > 0 else float("inf")
+        out.append(
+            f"<tr><td class='rank'>{i}</td><td class='word'>{esc(row['ngram'])}</td>"
+            f"<td class='num claude'>{row['target_per_million']:,.0f}</td>"
+            f"<td class='num soft'>{best:,.2f}</td>"
+            f"<td class='num ratio'>{ratio_text(ratio)}</td>"
+            f"<td class='num soft'>{row['z_min']:,.0f}</td>"
             f"<td class='num soft'>{row['sessions_present']}</td></tr>"
         )
     return "\n".join(out)
@@ -142,155 +251,137 @@ def domain_rows(frame: pl.DataFrame, words: list[str]) -> str:
         ratio = d["target_per_million"] / general if general > 0 else float("inf")
         out.append(
             f"<tr><td class='word'>{esc(word)}</td>"
-            f"<td class='num strong'>{d['target_per_million']:,.0f}</td>"
+            f"<td class='num claude'>{d['target_per_million']:,.0f}</td>"
             f"<td class='num soft'>{general:,.1f}</td>"
-            f"<td class='num heat'>{ratio_text(ratio)}</td>"
+            f"<td class='num ratio'>{ratio_text(ratio)}</td>"
             f"<td class='num soft'>{(d.get('per_million_biomedical') or 0.0):,.1f}</td>"
-            f"<td class='num cool'>{(d.get('specialisation') or 0.0):+.1f}</td></tr>"
-        )
-    return "\n".join(out)
-
-
-def ngram_rows(frame: pl.DataFrame, limit: int) -> str:
-    out = []
-    for i, row in enumerate(frame.head(limit).iter_rows(named=True), start=1):
-        best = row["best_reference_per_million"]
-        ratio = row["target_per_million"] / best if best > 0 else float("inf")
-        out.append(
-            f"<tr><td class='rank'>{i}</td><td class='word'>{esc(row['ngram'])}</td>"
-            f"<td class='num strong'>{row['target_per_million']:,.0f}</td>"
-            f"<td class='num soft'>{best:,.2f}</td>"
-            f"<td class='num heat'>{ratio_text(ratio)}</td>"
-            f"<td class='barcell'>{bar(ratio)}</td>"
-            f"<td class='num soft'>{row['z_min']:,.0f}</td>"
-            f"<td class='num soft'>{row['sessions_present']}</td></tr>"
+            f"<td class='num human'>{(d.get('specialisation') or 0.0):+.1f}</td></tr>"
         )
     return "\n".join(out)
 
 
 STYLE = """
 *,*::before,*::after{box-sizing:border-box}
-:root{__LIGHT__ --measure:68ch;}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){__DARK__}}
+__FONT__
+:root{__LIGHT__ --measure:66ch;}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){__DARK__}}
 :root[data-theme="dark"]{__DARK__}
 
 html{-webkit-text-size-adjust:100%}
 body{
-  margin:0; background:var(--paper); color:var(--ink);
-  font-family:ui-serif,"Iowan Old Style","Charter","Palatino Linotype",Palatino,Georgia,serif;
-  font-size:17px; line-height:1.62; text-rendering:optimizeLegibility;
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:ui-serif,"Iowan Old Style",Charter,"Palatino Linotype",Palatino,Georgia,serif;
+  font-size:17px;line-height:1.6;text-rendering:optimizeLegibility;
 }
-.mono,code,td.num,th.num,.rank,.label,.stat b,.bar{
+.display{font-family:Display,ui-serif,Georgia,serif;font-weight:400}
+code,.mono,td.num,th,.rank,.eyebrow,.kicker,.tag,.legend{
   font-family:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,"Liberation Mono",monospace;
 }
-.wrap{max-width:1120px;margin:0 auto;padding:0 clamp(16px,4vw,44px) 96px}
+.wrap{max-width:1080px;margin:0 auto;padding:0 clamp(16px,4vw,40px) 90px}
 .col{max-width:var(--measure)}
-p{margin:0 0 1.05em}
-a{color:var(--cool)}
+p{margin:0 0 1em}
 strong{font-weight:650}
-em{font-style:italic}
+a{color:var(--human)}
+:focus-visible{outline:2px solid var(--human);outline-offset:2px}
 
-/* ---- masthead ---- */
-header.masthead{padding:clamp(48px,9vw,104px) 0 30px;border-bottom:2px solid var(--ink)}
-.eyebrow{
-  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  font-size:11px;letter-spacing:.20em;text-transform:uppercase;color:var(--ink-faint);
-  margin:0 0 22px;
-}
-h1{
-  font-size:clamp(2.5rem,6.2vw,4.3rem); line-height:1.02; letter-spacing:-.022em;
-  font-weight:600; margin:0 0 .5em; text-wrap:balance; max-width:16ch;
-}
-.standfirst{font-size:1.2rem;line-height:1.5;color:var(--ink-soft);max-width:56ch;margin:0}
+header{padding:clamp(38px,7vw,84px) 0 0}
+.eyebrow{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-faint);
+  margin:0 0 28px}
+.hero{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);
+  padding:22px 0 20px;margin:0 0 26px}
+.hero-phrase{display:block;font-size:clamp(3.6rem,16vw,10.5rem);line-height:.84;
+  letter-spacing:-.035em;color:var(--claude);margin:0}
+.hero-meta{display:flex;flex-wrap:wrap;gap:6px 30px;margin-top:20px;align-items:baseline}
+.hero-meta b{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:1.5rem;
+  font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--ink)}
+.hero-meta span{font-size:13px;color:var(--ink-soft)}
+h1{font-size:clamp(1.85rem,4.4vw,2.85rem);line-height:1.06;letter-spacing:-.02em;
+  font-weight:400;margin:0 0 .45em;text-wrap:balance;max-width:20ch}
+.standfirst{font-size:1.1rem;line-height:1.5;color:var(--ink-soft);max-width:58ch;margin:0}
 
-/* ---- section rhythm ---- */
-section{padding-top:clamp(44px,6vw,72px)}
-h2{
-  font-size:1.62rem;letter-spacing:-.012em;font-weight:600;margin:0 0 .3em;text-wrap:balance;
-}
-h3{font-size:1.06rem;font-weight:650;margin:2.1em 0 .5em;letter-spacing:-.004em}
-.kicker{
-  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--heat);
-  margin:0 0 .85em;
-}
-.lede{font-size:1.06rem;color:var(--ink-soft);max-width:62ch}
+section{padding-top:clamp(40px,6vw,66px)}
+h2{font-size:1.7rem;font-weight:400;letter-spacing:-.012em;margin:0 0 .3em;text-wrap:balance}
+h3{font-size:1rem;font-weight:650;margin:2em 0 .5em}
+.kicker{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--claude);
+  margin:0 0 .9em}
+.lede{font-size:1.03rem;color:var(--ink-soft);max-width:60ch}
 
-/* ---- figure strip ---- */
-.stats{
-  display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);
-  grid-template-columns:repeat(auto-fit,minmax(168px,1fr));margin:30px 0 6px;
-}
-.stat{background:var(--panel);padding:16px 18px}
-.stat b{display:block;font-size:1.72rem;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.stat span{display:block;font-size:12.5px;color:var(--ink-soft);margin-top:3px;line-height:1.35}
-.stat.hot b{color:var(--heat)}
-.stat.cool b{color:var(--cool)}
+.stats{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);
+  grid-template-columns:repeat(auto-fit,minmax(166px,1fr));margin:26px 0 30px}
+.stat{background:var(--panel);padding:15px 17px}
+.stat b{display:block;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  font-size:1.72rem;font-weight:500;font-variant-numeric:tabular-nums;line-height:1.1;
+  letter-spacing:-.03em}
+.stat span{display:block;font-size:12.5px;color:var(--ink-soft);margin-top:5px;line-height:1.35}
 
-/* ---- tables ---- */
-.scroll{overflow-x:auto;margin:26px 0 8px;border-top:2px solid var(--ink);border-bottom:1px solid var(--rule-strong)}
-table{border-collapse:collapse;width:100%;font-size:14px}
-th{
-  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-faint);
-  font-weight:500;text-align:left;padding:11px 12px;border-bottom:1px solid var(--rule-strong);
-  white-space:nowrap;vertical-align:bottom;
-}
+figure{margin:24px 0 0}
+.chartbox{overflow-x:auto;border-top:1px solid var(--rule-strong);padding-top:14px}
+.legend{display:flex;gap:20px;font-size:11.5px;color:var(--ink-soft);margin:0 0 8px;
+  flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;
+  vertical-align:-1px}
+.legend .lh{background:var(--human)}
+.legend .lc{background:var(--claude)}
+svg .axis{font-size:10.5px;fill:var(--ink-faint);
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+svg .axis-title{font-size:9.5px;fill:var(--ink-faint);letter-spacing:.09em;
+  text-transform:uppercase;font-family:ui-monospace,Menlo,Consolas,monospace}
+svg .rowlabel{font-size:12px;fill:var(--ink);
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+svg .rowratio{font-size:11px;fill:var(--claude);
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+svg .connector{stroke:var(--rule-strong);stroke-width:2}
+svg .mark-human{fill:var(--human);stroke:var(--paper);stroke-width:2}
+svg .mark-claude{fill:var(--claude);stroke:var(--paper);stroke-width:2}
+svg .dumb:hover .connector{stroke:var(--ink-faint)}
+figcaption{font-size:12.5px;color:var(--ink-faint);margin-top:12px;max-width:64ch;
+  line-height:1.45}
+
+.scroll{overflow-x:auto;margin:24px 0 6px;border-top:1px solid var(--ink);
+  border-bottom:1px solid var(--rule-strong)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);
+  font-weight:400;text-align:left;padding:10px 11px;border-bottom:1px solid var(--rule-strong);
+  white-space:nowrap;vertical-align:bottom}
 th.num{text-align:right}
-td{padding:7px 12px;border-bottom:1px solid var(--rule);vertical-align:baseline}
+td{padding:6px 11px;border-bottom:1px solid var(--rule);vertical-align:baseline}
 tbody tr:last-child td{border-bottom:0}
-td.num{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;white-space:nowrap}
-td.rank{color:var(--ink-faint);font-size:11.5px;text-align:right;width:3ch;font-variant-numeric:tabular-nums}
-td.word{
-  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  font-size:13.5px;font-weight:500;white-space:nowrap;padding-right:22px;
-}
-td.strong{color:var(--ink);font-weight:600}
+td.num{text-align:right;font-variant-numeric:tabular-nums;font-size:12.5px;white-space:nowrap}
+td.rank{color:var(--ink-faint);font-size:11px;text-align:right;width:3ch;
+  font-variant-numeric:tabular-nums}
+td.word{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;font-weight:500;
+  white-space:nowrap;padding-right:20px}
 td.soft{color:var(--ink-soft)}
-td.heat{color:var(--heat);font-weight:600}
-td.cool{color:var(--cool);font-weight:600;text-align:right;font-variant-numeric:tabular-nums;font-size:13px}
-.barcell{width:110px;padding-right:18px}
-.bar{display:block;height:6px;background:var(--heat-track);width:100%}
-.bar i{display:block;height:100%;background:var(--heat-bar)}
-.group-head th{border-bottom:0;padding-bottom:2px;color:var(--cool)}
-caption{caption-side:bottom;text-align:left;font-size:12.5px;color:var(--ink-faint);padding:10px 12px 0;line-height:1.45}
+td.claude{color:var(--claude);font-weight:600}
+td.human{color:var(--human);font-weight:600}
+td.ratio{color:var(--ink);font-weight:600}
+caption{caption-side:bottom;text-align:left;font-size:12.5px;color:var(--ink-faint);
+  padding:10px 11px 0;line-height:1.45}
 
-/* ---- verdict list ---- */
-.verdicts{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);margin:26px 0}
-.verdict{background:var(--panel);padding:15px 18px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:baseline}
-.verdict .w{font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:600}
-.verdict .d{font-size:13.5px;color:var(--ink-soft);grid-column:1/-1;margin-top:2px;line-height:1.45}
-.tag{
-  font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.11em;text-transform:uppercase;
-  padding:3px 8px;border:1px solid currentColor;white-space:nowrap;
-}
-.tag.pass{color:var(--cool)}
-.tag.fail{color:var(--flag)}
+.verdicts{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);margin:24px 0}
+.verdict{background:var(--panel);padding:14px 17px;display:grid;
+  grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:baseline}
+.verdict .w{font-family:ui-monospace,Menlo,monospace;font-size:14.5px;font-weight:600}
+.verdict .d{font-size:13.5px;color:var(--ink-soft);grid-column:1/-1;margin-top:3px;
+  line-height:1.45}
+.tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;
+  border:1px solid currentColor;white-space:nowrap}
+.tag.pass{color:var(--human)}
+.tag.fail{color:var(--claude)}
 
-/* ---- gates / notes ---- */
-ul.gates{list-style:none;padding:0;margin:22px 0;max-width:var(--measure)}
-ul.gates li{padding:11px 0 11px 30px;border-bottom:1px solid var(--rule);position:relative;font-size:15.5px}
-ul.gates li::before{
-  content:"";position:absolute;left:6px;top:1.22em;width:9px;height:1px;background:var(--heat);
-}
+ul.gates{list-style:none;padding:0;margin:20px 0;max-width:var(--measure)}
+ul.gates li{padding:10px 0 10px 28px;border-bottom:1px solid var(--rule);position:relative;
+  font-size:15px}
+ul.gates li::before{content:"";position:absolute;left:4px;top:1.2em;width:9px;height:1px;
+  background:var(--claude)}
 ul.gates li:last-child{border-bottom:0}
-.note{
-  border-left:2px solid var(--heat);padding:2px 0 2px 20px;margin:26px 0;
-  color:var(--ink-soft);font-size:15.5px;max-width:64ch;
-}
+.note{border-left:2px solid var(--claude);padding:1px 0 1px 18px;margin:24px 0;
+  color:var(--ink-soft);font-size:15px;max-width:62ch}
 .note b{color:var(--ink)}
-code{
-  font-size:.88em;background:var(--heat-track);padding:1px 5px;color:var(--ink);
-}
-footer{margin-top:80px;padding-top:26px;border-top:2px solid var(--ink);font-size:13px;color:var(--ink-faint);max-width:var(--measure)}
-@media (max-width:640px){
-  body{font-size:16px}
-  .verdict{grid-template-columns:1fr}
-}
-@media (prefers-reduced-motion:no-preference){
-  .bar i{animation:grow .7s cubic-bezier(.2,.7,.3,1) both}
-  @keyframes grow{from{transform:scaleX(0);transform-origin:left}to{transform:scaleX(1)}}
-}
+code{font-size:.86em;background:var(--claude-soft);padding:1px 5px;color:var(--ink)}
+footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--ink);font-size:13px;
+  color:var(--ink-faint);max-width:var(--measure)}
+@media (max-width:640px){body{font-size:16px}.verdict{grid-template-columns:1fr}}
 """
 
 
@@ -309,9 +400,7 @@ def build() -> str:
     quiet = underused(wide).head(12)
 
     null = run_null_test(draws=300)
-    null_survivors = int(null.filter(pl.col("survives")).height)
-    null_total = int(null.height)
-    null_rate = 100 * null_survivors / null_total
+    null_rate = 100 * int(null.filter(pl.col("survives")).height) / int(null.height)
     threshold = empirical_threshold(null["z"].to_numpy(), false_positive_rate=0.01)
 
     claude_meta = meta("claude_main")
@@ -319,6 +408,13 @@ def build() -> str:
     reference_tokens = sum(m["stats"]["tokens"] for cid, m in corpora if cid != "claude_main")
     documents = pl.read_parquet(DOCUMENTS_PARQUET).filter(pl.col("corpus_id") == "claude_main")
     project_count = int(documents["project"].n_unique())
+
+    bigrams = pl.read_parquet(OUTPUT_DIR / "overuse_ngram_2.parquet")
+    let_me = bigrams.filter(pl.col("ngram") == "let me")
+    let_me_rate = float(let_me["target_per_million"][0]) if let_me.height else 0.0
+    best_human = float(let_me["best_reference_per_million"][0]) if let_me.height else 0.0
+    let_me_ratio = let_me_rate / best_human if best_human > 0 else float("inf")
+    one_in = round(1e6 / let_me_rate) if let_me_rate else 0
 
     corpus_rows = "\n".join(
         f"<tr><td class='word'>{esc(cid)}</td>"
@@ -329,77 +425,63 @@ def build() -> str:
         for cid, m in corpora
     )
 
-    baseline_qualifying = overused(baseline).height
     chain = [
         (f"{baseline.height:,}", "candidate words, before any correction"),
-        (f"{baseline_qualifying}", "over-used against four general baselines"),
+        (f"{overused(baseline).height}", "over-used against four general baselines"),
         (f"{qualifying.height}", "after a biomedical baseline and morphological folding"),
         (f"{recalibrated.height}", f"after recalibrating the threshold to z &ge; {threshold:.2f}"),
         (f"{style.height}", "that are style rather than domain vocabulary"),
     ]
     chain_rows = "\n".join(
-        f"<tr><td class='num strong'>{value}</td><td class='soft'>{label}</td></tr>"
-        for value, label in chain
+        f"<tr><td class='num claude'>{v}</td><td class='soft'>{lbl}</td></tr>" for v, lbl in chain
     )
 
-    predictions = []
+    verdicts = []
     for token in ("gap", "instinct", "churn"):
         row = wide.filter(pl.col("token") == token)
         if not row.height:
             continue
         d = row.row(0, named=True)
-        passed = bool(
+        ok = bool(
             d["well_dispersed"]
             and d["tiers_agreeing"] == d["tiers_compared"]
             and d["clears_empirical"]
         )
         rank = style.with_row_index("r").filter(pl.col("token") == token)
-        predictions.append(
-            {
-                "token": token,
-                "rate": d["target_per_million"],
-                "ratio": word_ratio(d, tiers),
-                "passed": passed,
-                "rank": int(rank["r"][0]) + 1 if rank.height else None,
-                "dp": d["dispersion_dp"],
-                "sessions": int(d["sessions_present"]),
-                "spec": d["specialisation"],
-            }
-        )
-
-    verdicts = []
-    for p in predictions:
-        if p["passed"]:
-            place = f" &middot; rank {p['rank']}" if p["rank"] else ""
+        place = f" &middot; rank {int(rank['r'][0]) + 1}" if rank.height else ""
+        if ok:
             tag = f"<span class='tag pass'>confirmed{place}</span>"
             detail = (
-                f"{p['rate']:,.0f} per million, {ratio_text(p['ratio'])} the toughest human "
-                f"baseline, spread over {p['sessions']} sessions (DP {p['dp']:.2f}). "
-                f"Specialisation {p['spec']:+.1f} — general English, not domain vocabulary."
+                f"{d['target_per_million']:,.0f} per million, "
+                f"{ratio_text(word_ratio(d, tiers))} the toughest human corpus, spread over "
+                f"{int(d['sessions_present'])} sessions. Specialisation "
+                f"{d['specialisation']:+.1f} &mdash; ordinary English, not domain vocabulary."
             )
         else:
             tag = "<span class='tag fail'>rejected</span>"
             detail = (
-                f"{p['rate']:,.0f} per million, {ratio_text(p['ratio'])} the toughest baseline — "
-                f"a larger ratio than most of what is published here. Still rejected: it appears "
-                f"in only {p['sessions']} sessions (DP {p['dp']:.2f}). Under the "
-                f"frequency-neutral dispersion gate, which was built specifically because the "
-                f"flat one penalised rare words, it is rejected again."
+                f"{d['target_per_million']:,.0f} per million, "
+                f"{ratio_text(word_ratio(d, tiers))} the toughest corpus &mdash; a bigger ratio "
+                f"than most of what is published here. Rejected anyway: it lives in "
+                f"{int(d['sessions_present'])} sessions of {claude_meta['stats']['parts']}, "
+                "which is a topic, not a habit. It is rejected by the frequency-neutral "
+                "dispersion gate too &mdash; the one built precisely because the flat gate "
+                "penalised rare words."
             )
         verdicts.append(
-            f"<div class='verdict'><span class='w'>{esc(p['token'])}</span>{tag}"
+            f"<div class='verdict'><span class='w'>{esc(token)}</span>{tag}"
             f"<span class='d'>{detail}</span></div>"
         )
     verdicts.append(
-        "<div class='verdict'><span class='w'>you're not imagining it</span>"
+        "<div class='verdict'><span class='w'>you&rsquo;re not imagining it</span>"
         "<span class='tag fail'>not present</span>"
-        "<span class='d'>The word <code>imagining</code> occurs three times in the whole corpus, "
-        f"far below the floor of {MIN_TARGET_COUNT}. The phrase is not there to measure, at any "
-        "chain length. Predicted, and absent.</span></div>"
+        "<span class='d'>The word <code>imagining</code> occurs three times in the whole "
+        f"corpus, far below the floor of {MIN_TARGET_COUNT}. The phrase is not there to "
+        "measure, at any chain length. Predicted, and absent.</span></div>"
     )
 
     ngram_sections = []
-    for n, title in ((2, "Two-word chains"), (3, "Three-word chains"), (4, "Four-word chains")):
+    for n, title in ((2, "Two words"), (3, "Three words"), (4, "Four words")):
         path = OUTPUT_DIR / f"overuse_ngram_{n}.parquet"
         if not path.exists():
             continue
@@ -414,14 +496,14 @@ def build() -> str:
             f"""<h3>{title} &mdash; {passing.height} of {frame.height} candidates</h3>
 <div class="scroll"><table>
 <thead><tr><th></th><th>chain</th><th class="num">Claude /M</th>
-<th class="num">best human /M</th><th class="num">ratio</th><th></th>
+<th class="num">best human /M</th><th class="num">ratio</th>
 <th class="num">min z</th><th class="num">sessions</th></tr></thead>
-<tbody>{ngram_rows(passing, 14)}</tbody></table></div>"""
+<tbody>{ngram_rows(passing, 12)}</tbody></table></div>"""
         )
 
     quiet_rows = "\n".join(
         f"<tr><td class='word'>{esc(r['token'])}</td>"
-        f"<td class='num strong'>{r['target_per_million']:,.0f}</td>"
+        f"<td class='num claude'>{r['target_per_million']:,.0f}</td>"
         + "".join(
             f"<td class='num soft'>{(r.get(f'per_million_{t}') or 0.0):,.0f}</td>" for t in tiers
         )
@@ -430,102 +512,103 @@ def build() -> str:
     )
 
     tier_heads = "".join(f"<th class='num'>{esc(TIER_LABEL.get(t, t))}</th>" for t in tiers)
-    style_css = STYLE.replace("__LIGHT__", tokens(LIGHT)).replace("__DARK__", tokens(DARK))
-    stamp = datetime.now(UTC).strftime("%d %B %Y")
+    chart = dumbbell(list(style.iter_rows(named=True)), tiers)
+    css = (
+        STYLE.replace("__FONT__", font_face())
+        .replace("__LIGHT__", tokens(LIGHT))
+        .replace("__DARK__", tokens(DARK))
+    )
+    stamp = datetime.now(UTC).strftime("%-d %B %Y")
 
     return f"""<title>The Let Me Corpus</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>{style_css}</style>
+<style>{css}</style>
 <div class="wrap">
 
-<header class="masthead">
+<header>
   <p class="eyebrow">Corpus study &middot; {esc(stamp)}</p>
+  <div class="hero">
+    <span class="hero-phrase display">let me</span>
+    <div class="hero-meta">
+      <b>{let_me_rate:,.0f}</b>
+      <span>per million words &mdash; about one word in {one_in}</span>
+      <b>{ratio_text(let_me_ratio)}</b>
+      <span>the rate of the human corpus that uses it most</span>
+    </div>
+  </div>
   <h1>What Claude Code says too often</h1>
-  <p class="standfirst">{claude_meta['stats']['tokens']:,} words of assistant prose, measured
-  against {reference_tokens/1e6:,.0f} million words of human writing across {len(tiers)} corpora.
-  A word is reported only if it is over-used against <em>every</em> one of them, survives
-  morphological folding, and clears a threshold calibrated from this corpus's own null
-  distribution.</p>
+  <p class="standfirst">{claude_meta['stats']['tokens']:,} words of assistant prose measured
+  against {reference_tokens / 1e6:,.0f} million words of human writing. A word is reported only
+  if it is over-used against <em>every</em> corpus, survives having its inflected forms merged,
+  and clears a threshold calibrated from this corpus&rsquo;s own null distribution.</p>
 </header>
 
 <section>
   <div class="stats">
     <div class="stat"><b>{claude_meta['stats']['tokens']:,}</b><span>words of Claude prose, after code and markup are stripped</span></div>
     <div class="stat"><b>{claude_meta['stats']['parts']}</b><span>sessions across {project_count} projects</span></div>
-    <div class="stat hot"><b>{style.height}</b><span>style words surviving every correction</span></div>
-    <div class="stat cool"><b>{null_rate:.1f}%</b><span>false-positive floor, from comparing the corpus against itself</span></div>
+    <div class="stat"><b>{style.height}</b><span>style words surviving every correction</span></div>
+    <div class="stat"><b>{null_rate:.1f}%</b><span>false positives when the corpus is compared against itself</span></div>
   </div>
+  <p class="col">The strongest result is not a favourite adjective. It is a sentence opening.
+  Every four-word chain that survives the gates is a variant of one construction &mdash;
+  <code>let me read the</code>, <code>let me check the</code>, <code>let me verify the</code>,
+  <code>let me look at the</code>. The habit is announcing an action before performing it, over
+  and over, in the same six characters.</p>
+  <p class="col">Around it sit two clusters: verification (<code>verify</code>,
+  <code>confirm</code>, <code>check</code>, <code>exactly</code>, <code>deliberately</code>) and
+  the narration of sequence (<code>now</code>, <code>already</code>, <code>before</code>).</p>
 </section>
 
 <section>
-  <p class="kicker">The finding</p>
-  <h2>It is not a vocabulary. It is a sentence opening.</h2>
-  <p class="col">The strongest phrase result is <code>let me</code> &mdash; 11,661 per million,
-  about one word in 86. Every four-word chain that survives the gates is a variation on it:
-  <code>let me read the</code>, <code>let me check the</code>, <code>let me verify the</code>,
-  <code>let me look at the</code>. The habit is not a favourite adjective. It is announcing an
-  action before performing it, over and over, in the same six characters.</p>
-  <p class="col">Around it sit two clusters. Verification &mdash; <code>verify</code>,
-  <code>confirm</code>, <code>check</code>, <code>real</code>, <code>exactly</code>,
-  <code>deliberately</code> &mdash; and sequence narration: <code>now</code>,
-  <code>already</code>, <code>before</code>. Two of the strongest, <code>guard</code> and
-  <code>gate</code>, are words <em>general</em> English uses more than specialist writing does,
-  which is as far from a domain artifact as a word can get.</p>
+  <p class="kicker">The gap</p>
+  <h2>How far from human rates</h2>
+  <p class="lede">Each row is one word. The blue mark is its rate in whichever human corpus uses
+  it <em>most</em> &mdash; the toughest available comparison &mdash; and the orange mark is
+  Claude&rsquo;s rate. The distance between them is the finding.</p>
+  <figure>
+    <p class="legend"><span><i class="lh"></i>toughest human corpus</span>
+    <span><i class="lc"></i>Claude Code</span></p>
+    <div class="chartbox">{chart}</div>
+    <figcaption>The top 18 style words, in the report&rsquo;s own ranking. <code>the</code> is
+    the instructive row: its two marks nearly touch, because Claude uses it only about 6% more
+    than the human corpus that uses it most &mdash; but at 86,000 occurrences per million, 6% is
+    overwhelming evidence. Large gaps and strong evidence are not the same thing, which is why
+    the ranking is by z-score and not by ratio.</figcaption>
+  </figure>
 </section>
 
 <section>
   <p class="kicker">Corrections</p>
-  <h2>From 2,355 candidates to {style.height} words</h2>
-  <p class="lede">Each step removes a distinct way of being wrong. The first count was inflated
+  <h2>From {baseline.height:,} candidates to {style.height} words</h2>
+  <p class="lede">Each step removes a different way of being wrong. The first count was inflated
   by all three.</p>
   <div class="scroll"><table><tbody>{chain_rows}</tbody>
   <caption>Every figure is read from a stored run, not recomputed for the prose.</caption>
   </table></div>
-  <div class="note"><b>Morphological folding</b> merges <code>gap</code>, <code>gaps</code>,
-  <code>gap's</code> and <code>gapped</code> into one entry, so a single habit stops occupying
-  four ranks and its evidence stops being split four ways. Folding stops at inflection:
-  <code>verification</code> is not folded into <code>verify</code>, because derivation changes
-  part of speech and often meaning &mdash; and <code>agape</code> is not folded into
+  <div class="note"><b>Folding</b> merges <code>gap</code>, <code>gaps</code>,
+  <code>gap&rsquo;s</code> and <code>gapped</code> into one entry, so a single habit stops
+  occupying four ranks and its evidence stops being split four ways. It stops at inflection:
+  <code>verification</code> is not merged into <code>verify</code>, because derivation changes
+  part of speech and often meaning &mdash; and <code>agape</code> is not merged into
   <code>gap</code> at all.</div>
 </section>
 
 <section>
   <p class="kicker">Style</p>
   <h2>The vocabulary</h2>
-  <p class="lede">Rate per million, beside each human corpus. <em>Spec</em> is specialisation:
-  how much more specialist human writing uses the word than general human writing, in doublings.
-  It is computed from the reference corpora alone &mdash; the Claude corpus is not an input &mdash;
-  so it can be used to read the ranking without contaminating it. Negative means the word belongs
-  to ordinary English.</p>
+  <p class="lede">Rate per million beside every human corpus. <em>Spec</em> is specialisation:
+  how much more specialist human writing uses a word than general human writing, in doublings.
+  It is computed from the reference corpora alone &mdash; the Claude corpus is not an input
+  &mdash; so it reads the ranking without contaminating it.</p>
   <div class="scroll"><table>
     <thead><tr><th></th><th>word</th><th class="num">Claude /M</th>{tier_heads}
-    <th class="num">vs hardest</th><th></th><th class="num">min z</th><th class="num">spec</th>
+    <th class="num">vs hardest</th><th class="num">min z</th><th class="num">spec</th>
     <th class="num">proj DP</th><th class="num">sessions</th></tr></thead>
     <tbody>{word_rows(style, tiers, 60)}</tbody>
-    <caption>Top 60 of {style.height} style words. <em>Proj DP</em> is dispersion across the
+    <caption>Top 60 of {style.height}. <em>Proj DP</em> is dispersion across the
     {project_count} projects: 0 means used everywhere, 1 means confined to one repository.</caption>
   </table></div>
-</section>
-
-<section>
-  <p class="kicker">Domain</p>
-  <h2>The words that are just the subject matter</h2>
-  <p class="lede">These are real rate differences and they are not style. They were separated
-  two ways: by adding a biomedical baseline, so they stop clearing the all-tiers gate, and by
-  scoring specialisation from human corpora alone.</p>
-  <div class="scroll"><table>
-    <thead><tr><th>word</th><th class="num">Claude /M</th><th class="num">general English /M</th>
-    <th class="num">ratio</th><th class="num">PubMed /M</th><th class="num">spec</th></tr></thead>
-    <tbody>{domain_rows(wide, ["annotation", "chromosome", "variant", "gene", "schema", "compiler", "namespace", "runtime", "query", "parsing"])}</tbody>
-    <caption>{domain.height} of the {recalibrated.height} surviving words score as domain
-    vocabulary. Adding PubMed abstracts as a fifth baseline is what removes them, without anyone
-    hand-writing a list of which words count as jargon.</caption>
-  </table></div>
-  <div class="note"><b>Domain vocabulary also moves the yardstick.</b> A corpus with a heavy
-  topical component has a wider spread of log-odds, so a fixed threshold does not mean what it
-  would in a topic-matched comparison. Reading the threshold off this corpus's own null
-  distribution gives <b>z &ge; {threshold:.2f}</b> at a 1% false-positive rate, where the
-  conventional constant was 3.00 &mdash; {100 * (threshold / 3.0 - 1):.0f}% stricter.</div>
 </section>
 
 <section>
@@ -539,20 +622,41 @@ def build() -> str:
 <section>
   <p class="kicker">Predictions, tested</p>
   <h2>The words named in advance</h2>
-  <p class="lede">Named before the corpus was built, which makes them a test of the method
-  rather than an output of it.</p>
+  <p class="lede">Named before the corpus existed, which makes them a test of the method rather
+  than an output of it.</p>
   <div class="verdicts">{"".join(verdicts)}</div>
+</section>
+
+<section>
+  <p class="kicker">Domain</p>
+  <h2>The words that are only the subject matter</h2>
+  <p class="lede">Real rate differences, and not style. They were separated two ways: by adding a
+  biomedical baseline so they stop clearing the all-corpora gate, and by scoring specialisation
+  from human corpora alone.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>word</th><th class="num">Claude /M</th><th class="num">general English /M</th>
+    <th class="num">ratio</th><th class="num">PubMed /M</th><th class="num">spec</th></tr></thead>
+    <tbody>{domain_rows(wide, ["annotation", "chromosome", "variant", "gene", "schema", "compiler", "namespace", "runtime", "query", "parsing"])}</tbody>
+    <caption>{domain.height} of the {recalibrated.height} surviving words score as domain
+    vocabulary. A biomedical baseline is what removes them, without anyone hand-writing a list
+    of which words count as jargon.</caption>
+  </table></div>
+  <div class="note"><b>Domain vocabulary also moves the yardstick.</b> A corpus with a heavy
+  topical component has a wider spread of log-odds, so a fixed threshold does not mean here what
+  it would in a topic-matched comparison. Read off this corpus&rsquo;s own null distribution the
+  cut is <b>z &ge; {threshold:.2f}</b> at a 1% false-positive rate, where the conventional
+  constant was 3.00 &mdash; {100 * (threshold / 3.0 - 1):.0f}% stricter.</div>
 </section>
 
 <section>
   <p class="kicker">Method</p>
   <h2>How a word qualifies</h2>
   <ul class="gates">
-    <li>At least <b>{MIN_TARGET_COUNT}</b> occurrences after inflected forms are folded together.</li>
-    <li>A log-odds z-score above the <b>empirically calibrated</b> threshold against
-    <b>every</b> baseline &mdash; the ranking statistic is the <em>minimum</em> across tiers, so
-    no single extreme corpus can carry a word.</li>
-    <li>Dunning's G&sup2; agreeing in sign with the log-odds. Two tests with different
+    <li>At least <b>{MIN_TARGET_COUNT}</b> occurrences once inflected forms are merged.</li>
+    <li>A log-odds z above the <b>empirically calibrated</b> threshold against <b>every</b>
+    corpus &mdash; the ranking statistic is the <em>minimum</em> across them, so no single
+    extreme baseline can carry a word.</li>
+    <li>Dunning&rsquo;s G&sup2; agreeing in sign with the log-odds. Two tests with different
     assumptions; where they disagree, neither is reported.</li>
     <li>A bootstrap over <b>sessions</b>, not tokens, with its lower bound above zero. Words
     inside one session are correlated, so a token-level interval would be far too narrow.</li>
@@ -587,30 +691,31 @@ def build() -> str:
   <p class="kicker">Limits</p>
   <h2>What this does not show</h2>
   <p class="col"><b>It is not a detector.</b> This compares aggregate rates between corpora.
-  There is no per-document verdict, and nothing here can tell you whether a particular text was
+  There is no per-document verdict, and nothing here can say whether a particular text was
   written by a model &mdash; or by which model.</p>
   <p class="col"><b>Topic control is better, not complete.</b> A private vocabulary that no
-  public corpus contains cannot be scored for specialisation at all; project dispersion is the
-  only instrument that sees it.</p>
+  public corpus contains cannot be scored for specialisation at all; dispersion across projects
+  is the only instrument that sees it.</p>
   <p class="col"><b>One author, {claude_meta['stats']['parts']} sessions,
   {project_count} projects.</b> Whether these rates hold for Claude Code generally is untested.</p>
   <p class="col"><b>The harness is not separated from the model.</b> Output is shaped by a system
-  prompt, by tool results and by the user's own phrasing. Nothing here distinguishes a model's
-  habit from one the harness induced.</p>
+  prompt, by tool results and by the user&rsquo;s own phrasing. Nothing here distinguishes a
+  model&rsquo;s habit from one the harness induced.</p>
 </section>
 
 <footer>
-  Built with <code>zipf</code>. Every figure is read from the run's own parquet output rather
-  than transcribed. Six defects found during the build are recorded in the repository's finding
-  log &mdash; including a prior normalised over the wrong denominator, a dispersion gate that
-  was secretly a frequency filter, and a morphology pass in which the fragment <em>noth</em>
-  swallowed the word <em>nothing</em>.
+  Built with <code>zipf</code>. Every figure is read from the run&rsquo;s own parquet output
+  rather than transcribed, and the chart&rsquo;s two colours were checked with a colour-vision
+  validator rather than chosen by eye. Nine defects found during the build are recorded in the
+  repository&rsquo;s finding log &mdash; among them a prior normalised over the wrong
+  denominator, a dispersion gate that was secretly a frequency filter, and a morphology pass in
+  which the fragment <em>noth</em> swallowed the word <em>nothing</em>.
 </footer>
 
 </div>"""
 
 
 if __name__ == "__main__":
-    destination = OUTPUT_DIR / "report.html"
+    destination = OUTPUT_DIR / "zipf-report.html"
     destination.write_text(build(), encoding="utf-8")
     print(f"wrote {destination}")
