@@ -62,6 +62,10 @@ class TierPlan:
     spec: CorpusSpec
     date_field: str | None = None
     date_below: str | None = None
+    #: How to read `date_field`. "iso" compares the string directly, which is only valid for
+    #: ISO-8601. "dmy" parses `DD.MM.YYYY ...` first — a lexicographic compare on that format
+    #: sorts by day-of-month and would silently admit the wrong years.
+    date_format: str = "iso" 
 
     @property
     def directory(self) -> Path:
@@ -165,6 +169,46 @@ TIERS: dict[str, TierPlan] = {
             ),
         ),
     ),
+    "commits": TierPlan(
+        corpus_id="commits",
+        repo_id="JetBrains-Research/commit-chronicle",
+        files=(
+            "data/train-00000-of-00061-2a7ccc8e843f5f5b.parquet",
+            "data/train-00001-of-00061-def39c7ec3091950.parquet",
+            "data/train-00002-of-00061-dfcab59179577c46.parquet",
+            "data/train-00003-of-00061-f93845bb3aadee0b.parquet",
+            "data/train-00004-of-00061-d476f7d1228697e8.parquet",
+            "data/train-00005-of-00061-e56b53608ef6ce93.parquet",
+            "data/train-00006-of-00061-a9529faebc3924cc.parquet",
+            "data/train-00007-of-00061-138c495790e8fd92.parquet",
+            "data/train-00008-of-00061-9932c9ea4d85ff58.parquet",
+            "data/train-00009-of-00061-15d88ff4993b6ef9.parquet",
+            "data/train-00010-of-00061-e07036c37bcee6fd.parquet",
+            "data/train-00011-of-00061-2eec95047f9f79e9.parquet",
+            "data/train-00012-of-00061-ed6de29bbde599b4.parquet",
+            "data/train-00013-of-00061-43599ab6ed492d67.parquet",
+        ),
+        reader="parquet",
+        text_fields=("message",),
+        preprocessor="markdown",
+        date_field="date",
+        date_below="2022-01-01",
+        date_format="dmy",
+        spec=CorpusSpec(
+            corpus_id="commits",
+            text_register="engineering",
+            source="Hugging Face JetBrains-Research/commit-chronicle, commit messages before 2022",
+            licence="Permissively licensed source repositories; see the dataset card",
+            date_cutoff="2022-01-01",
+            contamination_note=(
+                "Low. The corpus runs 1998-2023 and is filtered to before 2022, which removes "
+                "the window in which generated commit messages became plausible. This tier "
+                "exists because software-collaboration vocabulary - commit, bump, revert, "
+                "stale, upstream, deprecate - is a register, not a style, and no general "
+                "corpus and no Q&A corpus contains it at its natural rate."
+            ),
+        ),
+    ),
     "web": TierPlan(
         corpus_id="web",
         repo_id="HuggingFaceFW/fineweb",
@@ -209,6 +253,29 @@ def fetch_tier(tier: TierPlan) -> list[Path]:
     return paths
 
 
+def _normalise_date(value: object, date_format: str) -> str | None:
+    """Return an ISO-comparable date string, or None when the value cannot be read.
+
+    `DD.MM.YYYY` must be rearranged before comparison. Comparing it as-is sorts by day of the
+    month, so a cutoff of "2022-01-01" would admit or reject rows essentially at random while
+    looking like it worked.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    if date_format == "iso":
+        return value
+    if date_format == "dmy":
+        head = value.split(" ", 1)[0]
+        parts = head.split(".")
+        if len(parts) != 3:
+            return None
+        day, month, year = parts
+        if not (len(year) == 4 and year.isdigit() and month.isdigit() and day.isdigit()):
+            return None
+        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+    raise ValueError(f"unknown date_format {date_format!r}")
+
+
 def _first_text(row: dict, fields: tuple[str, ...]) -> str | None:
     """The first populated text field. Missing everywhere means an unusable row, not empty text."""
     for field in fields:
@@ -230,10 +297,10 @@ def _iter_parquet(path: Path, tier: TierPlan) -> Iterator[str]:
     for batch in handle.iter_batches(batch_size=2000, columns=columns):
         for row in batch.to_pylist():
             if tier.date_field and tier.date_below:
-                stamp = row.get(tier.date_field)
+                stamp = _normalise_date(row.get(tier.date_field), tier.date_format)
                 # A row whose date we cannot read is excluded rather than assumed in range:
                 # "date unknown" is not "date acceptable".
-                if not isinstance(stamp, str) or stamp >= tier.date_below:
+                if stamp is None or stamp >= tier.date_below:
                     continue
             text = _first_text(row, tier.text_fields)
             if text is not None:

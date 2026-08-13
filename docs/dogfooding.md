@@ -82,3 +82,52 @@ This entry stays open because the *reporting* question is unresolved, not the st
 it entirely tells the reader less than showing it with its rejection reason. The open question
 is whether the report should carry a "high ratio, insufficient spread" section rather than a
 single pass/fail list — which is a presentation decision, and the same one F3 raises.
+
+## F10 — the log-odds z collapses exactly where the effect is largest
+
+*found:* adding the commits tier dropped qualifying 4-grams to zero · *status:* open ·
+*class:* **surface it, not fix it**
+
+Adding a sixth corpus took the four-word chains from 13 qualifying to **none**, which looked at
+first like the new tier doing its job. It is not. The mechanism is in the statistic.
+
+Monroe's variance is `1/(y_target + a_w) + 1/(y_reference + a_w)`. The prior mass is 5,000
+pseudo-tokens spread across a background of ~253 million, so a rare chain gets
+`a_w ≈ 0.006`. When a chain occurs **zero** times in a reference corpus, the second term
+becomes `1/0.006 ≈ 170`, the standard error swamps the effect, and the z-score collapses toward
+1 no matter how extreme the rate difference is.
+
+Measured, on real chains:
+
+| chain | Claude /M | closest human /M | ratio | z_min | tiers agreeing |
+|---|---:|---:|---:|---:|---:|
+| `let me` | 11,661 | 226 | 52x | **19.0** | 6 of 6 |
+| `let me check` | 1,666 | 0.31 | ~5,400x | **1.6** | 3 of 6 |
+| `let me verify` | 953 | 0.03 | ~27,800x | **1.2** | 2 of 6 |
+| `let me read the` | 751 | 0.03 | ~22,000x | **1.0** | 3 of 6 |
+
+The ordering is inverted: **the more distinctive the phrase, the worse it scores.** Single words
+are unaffected, because any word frequent enough to be a candidate is attested in every corpus.
+This bites only where the reference count is zero, which is precisely the regime that phrase
+evidence lives in.
+
+**Why this is surfaced rather than fixed, and why each obvious repair is wrong:**
+
+- *Raise `prior_mass` for the n-gram stage.* It would work, and it is the single most suspect
+  change that could be made here, because the defect was found by noticing which phrases a
+  larger prior would rescue — all of them `let me` variants, the project's headline result.
+  Tuning a prior until it certifies the author's favourite finding is indistinguishable from
+  fitting, whatever the justification attached.
+- *Use the ratio instead.* A ratio against a smoothed zero is a statement about the smoothing
+  constant, not about the corpus. `let me verify` at "27,800x" is really "not once in 253 million
+  words", which is worth saying in words but is not a measurement.
+- *Drop the min-across-corpora rule for phrases.* It would certify them, by abandoning the one
+  rule that makes the unigram result trustworthy. Two standards, one report.
+- *Switch to an exact test.* The right answer, and a real piece of work: for zero-count
+  references the honest statistic is a one-sided Poisson or binomial bound on the rate ratio,
+  which stays finite and orders these chains correctly. It is a different estimator with a
+  different interpretation, so it needs its own METHODOLOGY entry and its own null calibration.
+
+Until then the report states the limitation in the Limits section and declines to claim the
+four-word chains, while still reporting `let me` itself, which clears all six corpora on its own
+evidence at z 19.

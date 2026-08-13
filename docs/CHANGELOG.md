@@ -4,6 +4,33 @@ What actually shipped, newest first.
 
 ## Unreleased
 
+### Added — third round: the engineering register
+
+- **A sixth tier: commit messages** (`JetBrains-Research/commit-chronicle`, 1.48 M messages
+  filtered to before 2022, 13.0 M tokens). Added to answer a specific challenge: that words like
+  `commit`, `bump`, `stale` and `defer` might be *developer register* rather than assistant
+  style. StackOverflow does not settle it — it is Q&A about broken code, thin on the vocabulary
+  of version control.
+- **Day-first date parsing** (`corpora._normalise_date`). The commit corpus dates are
+  `DD.MM.YYYY`, and comparing that as a string sorts by day of the month, so a 2022 cutoff would
+  have admitted and rejected rows almost at random while appearing to work.
+- **`scripts/reproduce.sh`** — the whole pipeline end to end, idempotent, with its disk, network
+  and time cost stated up front.
+
+### Results after the third round
+
+The challenge was half right, which is the most useful kind of result.
+
+**Removed as engineering register** — commit messages use these *more* than Claude does:
+`refactor` (215 per million against 2,806), `doc` (2,073 against 3,197), `revert` (215 against
+485), `deprecate` (105 against 478), `merge` (523 against 616).
+
+**Survived** — over-used even against 1.48 M real commit messages: `stale` (810 against 53),
+`digest` (1,076 against 33), `gate` (810 against 40), `guard` (847 against 113), `upstream`
+(597 against 106), `defer` (373 against 58), `commit` itself (3,788 against 1,081).
+
+Style vocabulary: 352 → **276**. `bump` survives at 1.4x and is now marginal enough to name.
+
 ### Added — second round: morphology and domain control
 
 - **Morphological folding** (`morphology.py`, `zipf compare --fold`). Generate-and-verify rather

@@ -240,6 +240,32 @@ def ngram_rows(frame: pl.DataFrame, limit: int) -> str:
     return "\n".join(out)
 
 
+def register_rows(frame: pl.DataFrame, words: list[str], survivors: set[str]) -> str:
+    """Words tested against the commit-message tier, and whether they survived it."""
+    out = []
+    for word in words:
+        row = frame.filter(pl.col("token") == word)
+        if not row.height:
+            continue
+        d = row.row(0, named=True)
+        commits = d.get("per_million_commits") or 0.0
+        kept = word in survivors
+        verdict = (
+            "<span class='tag pass'>style</span>"
+            if kept
+            else "<span class='tag fail'>register</span>"
+        )
+        ratio = d["target_per_million"] / commits if commits > 0 else float("inf")
+        out.append(
+            f"<tr><td class='word'>{esc(word)}</td>"
+            f"<td class='num claude'>{d['target_per_million']:,.0f}</td>"
+            f"<td class='num human'>{commits:,.0f}</td>"
+            f"<td class='num ratio'>{ratio_text(ratio)}</td>"
+            f"<td>{verdict}</td></tr>"
+        )
+    return "\n".join(out)
+
+
 def domain_rows(frame: pl.DataFrame, words: list[str]) -> str:
     out = []
     for word in words:
@@ -397,6 +423,7 @@ def build() -> str:
         ["z_min", "token"], descending=[True, False]
     )
     domain = recalibrated.filter(pl.col("is_domain"))
+    survivors = set(style["token"])
     quiet = underused(wide).head(12)
 
     null = run_null_test(draws=300)
@@ -492,6 +519,16 @@ def build() -> str:
             & (pl.col("max_session_share") <= MAX_SESSION_SHARE)
             & (pl.col("sessions_present") >= MIN_SESSIONS)
         )
+        if not passing.height:
+            ngram_sections.append(
+                f"<h3>{title} &mdash; none of {frame.height} candidates</h3>"
+                "<p class='lede'>Nothing at this length clears all six corpora <em>and</em> the "
+                "dispersion gates. The chains with the largest rate ratios are exactly the ones "
+                "the statistic cannot certify, because they do not occur in the human corpora at "
+                "all. This is a limit of the measurement, not evidence that the phrases are "
+                "ordinary.</p>"
+            )
+            continue
         ngram_sections.append(
             f"""<h3>{title} &mdash; {passing.height} of {frame.height} candidates</h3>
 <div class="scroll"><table>
@@ -551,10 +588,14 @@ def build() -> str:
     <div class="stat"><b>{null_rate:.1f}%</b><span>false positives when the corpus is compared against itself</span></div>
   </div>
   <p class="col">The strongest result is not a favourite adjective. It is a sentence opening.
-  Every four-word chain that survives the gates is a variant of one construction &mdash;
-  <code>let me read the</code>, <code>let me check the</code>, <code>let me verify the</code>,
-  <code>let me look at the</code>. The habit is announcing an action before performing it, over
-  and over, in the same six characters.</p>
+  <code>let me</code> runs at {let_me_rate:,.0f} per million against {best_human:,.0f} in the
+  human corpus that uses it most, and it clears every one of the six. The habit is announcing an
+  action before performing it, over and over, in the same six characters.</p>
+  <p class="col">Longer chains are more extreme still and <em>cannot be certified</em>:
+  <code>let me check</code> appears at 1,666 per million against 0.3 in the closest human
+  corpus, a ratio of roughly 5,400, and yet scores a z of 1.6. That is not a quirk of this
+  phrase &mdash; it is what the statistic does when a chain is <em>absent</em> from a reference
+  corpus, and it is described under Limits.</p>
   <p class="col">Around it sit two clusters: verification (<code>verify</code>,
   <code>confirm</code>, <code>check</code>, <code>exactly</code>, <code>deliberately</code>) and
   the narration of sequence (<code>now</code>, <code>already</code>, <code>before</code>).</p>
@@ -615,7 +656,9 @@ def build() -> str:
   <p class="kicker">Chains</p>
   <h2>Phrases</h2>
   <p class="lede">Built only after the single-word signal was confirmed. Overlapping n-grams are
-  not independent observations, so these z-scores are an ordering, not calibrated significance.</p>
+  not independent observations, so these z-scores are an ordering, not calibrated significance.
+  Note what happens as the chains lengthen: the number that can be certified collapses, for the
+  reason given under Limits.</p>
   {"".join(ngram_sections)}
 </section>
 
@@ -625,6 +668,25 @@ def build() -> str:
   <p class="lede">Named before the corpus existed, which makes them a test of the method rather
   than an output of it.</p>
   <div class="verdicts">{"".join(verdicts)}</div>
+</section>
+
+<section>
+  <p class="kicker">Register</p>
+  <h2>Is it a habit, or is it the job?</h2>
+  <p class="lede">Words like <code>commit</code>, <code>bump</code> and <code>defer</code> are
+  developer vocabulary. Measured against novels, Reddit and PubMed they look like style for an
+  obvious and uninteresting reason, and Stack Overflow does not settle it &mdash; it is questions
+  about broken code, thin on the language of version control. So a sixth corpus was added:
+  <b>1.48 million real commit messages</b>, written before 2022.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>word</th><th class="num">Claude /M</th><th class="num">commit messages /M</th>
+    <th class="num">ratio</th><th>verdict</th></tr></thead>
+    <tbody>{register_rows(wide, ["refactor", "doc", "revert", "deprecate", "merge", "commit", "bump", "upstream", "defer", "guard", "gate", "stale", "digest"], survivors)}</tbody>
+    <caption>The test was half passed, which is the useful outcome. Five words turned out to be
+    register &mdash; developers write <code>refactor</code> thirteen times more often than Claude
+    does &mdash; and were removed. The rest are over-used even against the corpus where they
+    belong.</caption>
+  </table></div>
 </section>
 
 <section>
@@ -693,6 +755,14 @@ def build() -> str:
   <p class="col"><b>It is not a detector.</b> This compares aggregate rates between corpora.
   There is no per-document verdict, and nothing here can say whether a particular text was
   written by a model &mdash; or by which model.</p>
+  <p class="col"><b>The statistic cannot certify a phrase that humans never write.</b> The
+  log-odds variance carries a term of one over the reference count plus the prior. When a chain
+  occurs zero times in a corpus and the prior is a fraction of one pseudo-count, that term
+  explodes and the z-score collapses &mdash; so the <em>more</em> distinctive a phrase is, the
+  worse it scores. <code>let me check</code>, at roughly 5,400 times the closest human rate,
+  scores 1.6. Single words are unaffected, because a word frequent enough to be a candidate is
+  attested everywhere. Raising the prior would rescue these phrases, which is precisely why it
+  has not been done here: the defect was found by looking at which phrases it would rescue.</p>
   <p class="col"><b>Topic control is better, not complete.</b> A private vocabulary that no
   public corpus contains cannot be scored for specialisation at all; dispersion across projects
   is the only instrument that sees it.</p>

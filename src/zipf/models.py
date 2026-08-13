@@ -22,15 +22,31 @@ CORPUS_IDS: frozenset[str] = frozenset(
         "technical",
         "web",
         "biomedical",
+        "commits",
     }
 )
 
 #: The four human reference tiers, in the order they are reported.
-REFERENCE_TIERS: tuple[str, ...] = ("literature", "reddit", "technical", "web", "biomedical")
+REFERENCE_TIERS: tuple[str, ...] = (
+    "literature",
+    "reddit",
+    "technical",
+    "web",
+    "biomedical",
+    "commits",
+)
 
 #: Register label, used to say which confound a tier controls for.
 REGISTERS: frozenset[str] = frozenset(
-    {"literary", "conversational", "technical", "web", "assistant", "biomedical"}
+    {
+        "literary",
+        "conversational",
+        "technical",
+        "web",
+        "assistant",
+        "biomedical",
+        "engineering",
+    }
 )
 
 

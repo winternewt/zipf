@@ -4,7 +4,7 @@ Provenance, licence, date cutoff and known contamination of every corpus. **Gene
 `data/output/meta_*.json` by `scripts/build_corpora_doc.py`** — do not hand-edit the numbers,
 regenerate them.
 
-Generated 2026-08-13T00:00:01+00:00.
+Generated 2026-08-13T15:24:51+00:00.
 
 ## Sizes as built
 
@@ -17,6 +17,7 @@ Generated 2026-08-13T00:00:01+00:00.
 | `technical` | technical | 60,000,038 | 315,929 | 200 | 828,666 | yes |
 | `web` | web | 60,000,088 | 599,589 | 200 | 118,742 | yes |
 | `biomedical` | biomedical | 32,668,538 | 341,918 | 4,000 | 261,124 | no |
+| `commits` | engineering | 12,982,011 | 343,594 | 2,800 | 1,481,868 | no |
 
 A capped tier stopped at the token cap rather than exhausting its files; the cap is recorded in the metadata and is never applied silently.
 
@@ -77,6 +78,14 @@ A capped tier stopped at the token cap rather than exhausting its files; the cap
 - **Date cutoff:** 1990-01-01
 - **Contamination:** Zero. Chunks are ordered by PMID, so chunk 1 begins at PMID 21 — records from the 1970s. This tier exists to control the topic confound the other four cannot: the target corpus is bioinformatics-heavy, so domain nouns like 'chromosome' and 'annotation' score against every general-English baseline while being purely topical. Measured against biomedical writing they stop scoring, without anyone hand-curating a list of which words count as domain terms.
 - **Built:** 2026-08-12T23:54:00.643162Z
+
+### `commits`
+
+- **Source:** Hugging Face JetBrains-Research/commit-chronicle, commit messages before 2022
+- **Licence:** Permissively licensed source repositories; see the dataset card
+- **Date cutoff:** 2022-01-01
+- **Contamination:** Low. The corpus runs 1998-2023 and is filtered to before 2022, which removes the window in which generated commit messages became plausible. This tier exists because software-collaboration vocabulary - commit, bump, revert, stale, upstream, deprecate - is a register, not a style, and no general corpus and no Q&A corpus contains it at its natural rate.
+- **Built:** 2026-08-13T15:02:58.588032Z
 
 ## A note on the direction of contamination
 

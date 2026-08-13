@@ -21,14 +21,14 @@ That question is narrower than it sounds, and the narrowing is the whole design:
 - **Aggregate, not per-document.** This is not a detector. There is no verdict on any single
   text, and the method cannot produce one.
 
-## 2. Why five baselines
+## 2. Why six baselines
 
 A single baseline cannot separate *style* from *topic*. Compare assistant prose to Victorian
 novels and the top of the list is `file`, `function`, `commit` — true differences, and
 completely uninformative, because they describe what the text is about rather than how it is
 written.
 
-Each tier removes a different confound, and only a word that clears all five is reported:
+Each tier removes a different confound, and only a word that clears all six is reported:
 
 | Tier | Controls for | Blind to |
 |---|---|---|
@@ -37,10 +37,21 @@ Each tier removes a different confound, and only a word that clears all five is 
 | `technical` | **topic** — same subject, same markdown, same fenced code | its own register habits (Q&A voice, terse answers) |
 | `web` | any single-source quirk; broad written English | nothing in particular, which is why it is the control on the other three |
 | `biomedical` | **the target's own subject matter** — PubMed abstracts, so bioinformatics vocabulary stops scoring | anything outside biomedicine; a private vocabulary no public corpus contains |
+| `commits` | **software-collaboration register** — commit messages, where `commit`, `bump`, `revert`, `stale` and `upstream` live at their natural rate | issue and pull-request *discussion*, which is longer-form and not covered here |
 
-The `technical` tier is the load-bearing one. StackOverflow posts are humans writing prose
-*about code*, in markdown, with fenced blocks — the same shape as the target corpus. A word
-that is over-used against StackOverflow is over-used for a reason other than the topic.
+Two tiers carry most of the weight, and they control different things.
+
+`technical` is StackOverflow: humans writing prose *about code*, in markdown, with fenced
+blocks — the same shape as the target corpus. But it is Q&A about broken code, which is not the
+same register as software *work*. Its vocabulary is `error`, `function`, `exception`; it is thin
+on `commit`, `bump`, `revert`, `stale`, `upstream`.
+
+`commits` closes exactly that gap. Commit messages are the register in which engineering work
+is narrated, and they are where the vocabulary of version control lives at its natural rate.
+Without this tier, ordinary developer register scores as assistant style: a word like `commit`
+is over-used against Victorian novels, Reddit and PubMed for the obvious reason, and
+StackOverflow does not rescue it. **This tier was added specifically to test whether the
+project's own top results were measuring a habit or a job.**
 
 **The ranking statistic is the minimum z across tiers, not the mean.** A mean lets one extreme
 baseline carry a word; `commit` scores enormously against Gutenberg and near zero against
@@ -235,7 +246,7 @@ indistinguishable from an unexamined one.
 
 The literary tier carries the opposite risk and it is worth naming: archaic vocabulary makes
 ordinary modern words look novel. That tier over-reports, which is precisely why a word must
-clear all five rather than any one.
+clear all six rather than any one.
 
 ## 6. The null test
 

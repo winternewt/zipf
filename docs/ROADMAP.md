@@ -78,3 +78,24 @@ senses of one lemma are merged: `meeting` the event folds into `meet` the verb.
 A tagger would resolve it, at the cost of a dependency and a per-token pass over 273 million
 words. Worth doing only if a result turns out to hinge on a noun/verb distinction; nothing in
 the current ranking does.
+
+## RM9 — No issue or pull-request discussion corpus
+
+*severity:* medium · *status:* open · *owner:* unassigned
+
+The `commits` tier covers the terse imperative register of commit messages. It does not cover
+the *discussion* register — issue threads, pull-request review, design argument — which is much
+closer in shape to what the target corpus actually is: extended prose explaining engineering
+decisions to a human.
+
+The obvious source, `bigcode/the-stack-github-issues`, is a **gated** Hugging Face dataset and
+returns 401 without accepting its terms and supplying a token, so it could not be built here.
+
+The alternatives found were rejected rather than substituted, and the reason matters:
+`Dahoas/code-review-instruct-critique-revision` and its siblings contain **model-generated**
+critiques. Using them as a human baseline would import generated text into the reference side,
+which is the one contamination this design cannot tolerate — it does not merely bias toward the
+null, it makes the baseline partly the thing being measured.
+
+Filling this needs either the gated dataset with credentials, or a fresh scrape of permissively
+licensed issue threads with a pre-2022 cutoff.
