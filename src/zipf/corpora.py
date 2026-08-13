@@ -209,6 +209,34 @@ TIERS: dict[str, TierPlan] = {
             ),
         ),
     ),
+    # Not in REFERENCE_TIERS: this is an instrument, not a gate. See scripts/fetch_vcs_corpus.py
+    # for why a sub-million-word corpus cannot be one of the tiers a word must clear.
+    "vcs": TierPlan(
+        corpus_id="vcs",
+        repo_id="local",
+        files=("vcs_docs.jsonl",),
+        reader="jsonl",
+        text_fields=("text",),
+        preprocessor="asciidoc",
+        spec=CorpusSpec(
+            corpus_id="vcs",
+            text_register="documentation",
+            source=(
+                "Pro Git (Chacon & Straub, progit/progit2) plus git's own Documentation/*.txt "
+                "at tag v2.43.0; built by scripts/fetch_vcs_corpus.py"
+            ),
+            licence="Pro Git: CC BY-NC-SA 3.0. git documentation: GPL-2.0. Not redistributed.",
+            date_cutoff="2023-11-20",
+            contamination_note=(
+                "Effectively zero: both are long-standing human-authored technical documents "
+                "under version control, and the git tag is pinned. This corpus exists to answer "
+                "one question — whether a word is simply the vocabulary of version control — "
+                "and is deliberately not one of the tiers a word must clear, because at under a "
+                "million words too many candidate words occur in it zero times, and a zero "
+                "reference count collapses the log-odds z whatever the effect size (F10)."
+            ),
+        ),
+    ),
     "web": TierPlan(
         corpus_id="web",
         repo_id="HuggingFaceFW/fineweb",
@@ -237,6 +265,11 @@ def fetch_tier(tier: TierPlan) -> list[Path]:
     Prints its target and byte total before starting, so an interrupted run can be diagnosed
     without repeating it.
     """
+    if tier.repo_id == "local":
+        raise ValueError(
+            f"tier {tier.corpus_id!r} is built locally, not downloaded. "
+            "Run `uv run python scripts/fetch_vcs_corpus.py`."
+        )
     tier.directory.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for filename in tier.files:

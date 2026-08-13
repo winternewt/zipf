@@ -4,6 +4,42 @@ What actually shipped, newest first.
 
 ## Unreleased
 
+### Added — fourth round: the manual itself
+
+The commit corpus settles whether a word belongs to the *register* of software work. It cannot
+settle whether a word belongs to the *subject* of version control, because commit messages use
+git's vocabulary without ever explaining it. So the documentation was added.
+
+- **A version-control documentation corpus**: Pro Git (CC BY-NC-SA) plus git's own
+  `Documentation/*.txt` at tag v2.43.0 (GPL-2.0). 458 documents, 315,979 tokens after code
+  stripping. Built by `scripts/fetch_vcs_corpus.py`, not by `zipf fetch` — it is two tarballs,
+  not a dataset.
+- **An AsciiDoc preprocessor.** Its listing fence is four or more hyphens, which in markdown is
+  a setext heading underline; teaching the markdown stripper that rule would make every heading
+  open a code block and swallow the document. Separate preprocessor, with a test pinning exactly
+  that.
+- **The version-control filter** — a rate comparison, deliberately *not* a seventh tier in the
+  minimum-z gate. At a third of a million tokens it would drop words whose count in it is zero,
+  collapsing their z through F10 while looking like topical control.
+
+### Results after the fourth round
+
+`commit` is answered: the git manual uses it at **6,383 per million** against Claude's 3,788.
+`branch` at 5,279 against 943. Also removed: `push`, `path`, `helper`, `line`, `note`, `entry`,
+`local`, `via`, `run`. 32 words in total.
+
+Style vocabulary: 276 → **248**. The full chain is now 2,355 candidates → 735 → 359 → 323 → 276
+→ 248.
+
+### Fixed — fourth round
+
+- **The version-control filter was over-broad on its first attempt**, and quietly so. Comparing
+  rates against the manual alone flags any word the manual uses at a similar rate, which is most
+  ordinary words — git documentation is dense technical prose. It removed `the`, `one`, `only`,
+  `run` and `same` as "version-control vocabulary". The filter now requires a word to be
+  *distinctive* to version-control writing (four times its general-English rate) **and** not
+  out-used by Claude. `the` scores +0.41 doublings and stays; `commit` scores +8.37 and goes.
+
 ### Added — third round: the engineering register
 
 - **A sixth tier: commit messages** (`JetBrains-Research/commit-chronicle`, 1.48 M messages

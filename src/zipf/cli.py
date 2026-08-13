@@ -217,7 +217,7 @@ def domain(
     passes = (pl.col("tiers_agreeing") == pl.col("tiers_compared")) & pl.col("well_dispersed")
     qualifying = annotated.filter(passes)
     recalibrated = qualifying.filter(pl.col("clears_empirical"))
-    style = recalibrated.filter(~pl.col("is_domain"))
+    style = recalibrated.filter(~pl.col("is_domain") & ~pl.col("is_version_control"))
 
     typer.echo(
         f"\nempirical threshold at FPR {false_positive_rate:.1%}: z >= {threshold:.2f} "
@@ -226,14 +226,16 @@ def domain(
         f"  qualifying at the empirical threshold: {recalibrated.height}\n"
         f"  of those, domain vocabulary (specialisation >= {DOMAIN_THRESHOLD}): "
         f"{recalibrated.filter(pl.col('is_domain')).height}\n"
+        f"  of those, version-control vocabulary  : "
+        f"{recalibrated.filter(pl.col('is_version_control')).height}\n"
         f"  of those, style vocabulary            : {style.height}\n"
     )
     with pl.Config(tbl_rows=top, tbl_cols=10, fmt_str_lengths=26):
         typer.echo(
             style.sort(["z_min", "token"], descending=[True, False])
             .select(
-                "token", "target_per_million", "z_min", "specialisation", "project_dp",
-                "dispersion_dp", "sessions_present",
+                "token", "target_per_million", "z_min", "specialisation", "vcs_per_million",
+                "project_dp", "sessions_present",
             )
             .head(top)
         )

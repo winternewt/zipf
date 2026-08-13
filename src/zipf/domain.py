@@ -40,6 +40,7 @@ import polars as pl
 
 from zipf.counts import CorpusCounts
 from zipf.harvest import DOCUMENTS_PARQUET
+from zipf.pipeline import load_totals
 from zipf.stats import gries_dp
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,31 @@ SPECIALISATION_SMOOTHING = 0.5
 #: domain vocabulary. 2.0 means four times more frequent — well outside ordinary variation, and
 #: chosen before looking at which words it captures.
 DOMAIN_THRESHOLD = 2.0
+
+#: The corpus of version-control documentation. Read as an instrument, never as a gate.
+VCS_CORPUS = "vcs"
+
+#: How distinctive a word must be to version-control writing before it can be dismissed as the
+#: subject's vocabulary: 2.0 doublings means the git manual uses it at least four times more
+#: often than general English does.
+#:
+#: Without this the filter is catastrophically over-broad, and quietly so. A rate ratio against
+#: the manual alone flags any word the manual uses at a similar rate to Claude — which is most
+#: ordinary words, because git documentation is dense technical prose. The first version of this
+#: filter removed `the`, `one`, `only`, `run` and `same` from the results as "version-control
+#: vocabulary".
+VCS_SPECIALISATION_THRESHOLD = 2.0
+
+#: Given that a word IS distinctive to version-control writing, it is dismissed only if Claude
+#: does not out-use the manual: a Claude rate below this multiple of the documentation rate.
+#:
+#: This is a **rate-ratio filter, not a min-z gate**, and the distinction is the whole reason it
+#: is allowed. The documentation corpus is a third of a million tokens; as a tier in the
+#: minimum-z rule it would drop words whose count in it is *zero* — collapsing their z through
+#: the mechanism in F10 — which looks like topical control and is really a lack of evidence. A
+#: direct rate comparison has no such failure mode: a word absent from the documentation simply
+#: gets an infinite ratio, which correctly reads as "not explained by version control".
+VCS_EXPLAINED_RATIO = 2.0
 
 
 def specialisation(
@@ -142,19 +168,75 @@ def empirical_threshold(null_z: np.ndarray, *, false_positive_rate: float = 0.01
     return float(np.quantile(finite, 1.0 - false_positive_rate))
 
 
+def vcs_specialisation(
+    vocabulary: list[str],
+    rates: np.ndarray,
+    tier_totals: dict[str, tuple[dict[str, int], int]],
+) -> np.ndarray:
+    """log2(rate in the git manual / rate in general English).
+
+    High means the word belongs to writing *about version control*, which is the property that
+    licenses dismissing it. A raw comparison against the manual cannot distinguish that from
+    "both are ordinary prose".
+    """
+    general_counts = np.zeros(len(vocabulary), dtype=np.float64)
+    general_size = 0.0
+    for name in GENERAL_TIERS:
+        if name not in tier_totals:
+            continue
+        totals, size = tier_totals[name]
+        general_counts += np.array([totals.get(t, 0) for t in vocabulary], dtype=np.float64)
+        general_size += float(size)
+    if general_size <= 0:
+        return np.full(len(vocabulary), np.nan)
+    general_rate = general_counts / general_size * 1e6 + SPECIALISATION_SMOOTHING
+    return np.log2((rates + SPECIALISATION_SMOOTHING) / general_rate)
+
+
+def vcs_rates(vocabulary: list[str]) -> np.ndarray:
+    """Each word's rate per million in version-control documentation.
+
+    Returns all-``nan`` when the corpus has not been built, because "we did not look" is not
+    "the documentation does not use it".
+    """
+    try:
+        totals, size = load_totals(VCS_CORPUS)
+    except FileNotFoundError:
+        logger.warning(
+            "the %s corpus is not built, so no word can be checked against version-control "
+            "documentation; run scripts/fetch_vcs_corpus.py then `zipf count --corpus vcs`",
+            VCS_CORPUS,
+        )
+        return np.full(len(vocabulary), np.nan)
+    return np.array([totals.get(t, 0) for t in vocabulary], dtype=np.float64) / size * 1e6
+
+
 def annotate(
     wide: pl.DataFrame,
     tier_totals: dict[str, tuple[dict[str, int], int]],
     *,
     stratum: str = "claude_main",
 ) -> pl.DataFrame:
-    """Add specialisation and project dispersion to a comparison table."""
+    """Add specialisation, project dispersion and the version-control rate."""
     vocabulary = wide["token"].to_list()
     scores = specialisation(vocabulary, tier_totals)
     dispersion = project_dispersion(vocabulary, stratum=stratum)
+    vcs = vcs_rates(vocabulary)
+    vcs_spec = vcs_specialisation(vocabulary, vcs, tier_totals)
     return wide.with_columns(
         specialisation=pl.Series(scores),
         project_dp=pl.Series(dispersion),
+        vcs_per_million=pl.Series(vcs),
+        vcs_specialisation=pl.Series(vcs_spec),
     ).with_columns(
         is_domain=(pl.col("specialisation") >= DOMAIN_THRESHOLD),
+        # Two conditions, and both are needed. Distinctive to version-control writing, AND not
+        # out-used by Claude. Dropping the first condition removes ordinary words; dropping the
+        # second would dismiss a word the manual mentions once and Claude says constantly.
+        is_version_control=(
+            pl.col("vcs_per_million").is_not_nan()
+            & (pl.col("vcs_per_million") > 0)
+            & (pl.col("vcs_specialisation") >= VCS_SPECIALISATION_THRESHOLD)
+            & (pl.col("target_per_million") < VCS_EXPLAINED_RATIO * pl.col("vcs_per_million"))
+        ),
     )

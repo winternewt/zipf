@@ -266,6 +266,22 @@ def register_rows(frame: pl.DataFrame, words: list[str], survivors: set[str]) ->
     return "\n".join(out)
 
 
+def vcs_rows(frame: pl.DataFrame, limit: int) -> str:
+    """Words the git documentation uses as much as Claude does, or more."""
+    ordered = frame.sort("target_per_million", descending=True)
+    out = []
+    for row in ordered.head(limit).iter_rows(named=True):
+        vcs = row.get("vcs_per_million") or 0.0
+        ratio = row["target_per_million"] / vcs if vcs > 0 else float("inf")
+        out.append(
+            f"<tr><td class='word'>{esc(row['token'])}</td>"
+            f"<td class='num claude'>{row['target_per_million']:,.0f}</td>"
+            f"<td class='num human'>{vcs:,.0f}</td>"
+            f"<td class='num ratio'>{ratio:,.2f}&times;</td></tr>"
+        )
+    return "\n".join(out)
+
+
 def domain_rows(frame: pl.DataFrame, words: list[str]) -> str:
     out = []
     for word in words:
@@ -419,10 +435,11 @@ def build() -> str:
     passes = (pl.col("tiers_agreeing") == pl.col("tiers_compared")) & pl.col("well_dispersed")
     qualifying = wide.filter(passes)
     recalibrated = qualifying.filter(pl.col("clears_empirical"))
-    style = recalibrated.filter(~pl.col("is_domain")).sort(
-        ["z_min", "token"], descending=[True, False]
-    )
+    style = recalibrated.filter(
+        ~pl.col("is_domain") & ~pl.col("is_version_control")
+    ).sort(["z_min", "token"], descending=[True, False])
     domain = recalibrated.filter(pl.col("is_domain"))
+    version_control = recalibrated.filter(pl.col("is_version_control"))
     survivors = set(style["token"])
     quiet = underused(wide).head(12)
 
@@ -457,7 +474,8 @@ def build() -> str:
         (f"{overused(baseline).height}", "over-used against four general baselines"),
         (f"{qualifying.height}", "after a biomedical baseline and morphological folding"),
         (f"{recalibrated.height}", f"after recalibrating the threshold to z &ge; {threshold:.2f}"),
-        (f"{style.height}", "that are style rather than domain vocabulary"),
+        (f"{recalibrated.height - domain.height}", "after removing the subject matter"),
+        (f"{style.height}", "after removing the vocabulary of version control itself"),
     ]
     chain_rows = "\n".join(
         f"<tr><td class='num claude'>{v}</td><td class='soft'>{lbl}</td></tr>" for v, lbl in chain
@@ -549,6 +567,10 @@ def build() -> str:
     )
 
     tier_heads = "".join(f"<th class='num'>{esc(TIER_LABEL.get(t, t))}</th>" for t in tiers)
+    try:
+        vcs_tokens = meta("vcs")["stats"]["tokens"]
+    except FileNotFoundError:
+        vcs_tokens = 0
     chart = dumbbell(list(style.iter_rows(named=True)), tiers)
     css = (
         STYLE.replace("__FONT__", font_face())
@@ -622,8 +644,8 @@ def build() -> str:
 <section>
   <p class="kicker">Corrections</p>
   <h2>From {baseline.height:,} candidates to {style.height} words</h2>
-  <p class="lede">Each step removes a different way of being wrong. The first count was inflated
-  by all three.</p>
+  <p class="lede">Each step removes a different way of being wrong, and the first count was
+  inflated by every one of them.</p>
   <div class="scroll"><table><tbody>{chain_rows}</tbody>
   <caption>Every figure is read from a stored run, not recomputed for the prose.</caption>
   </table></div>
@@ -687,6 +709,32 @@ def build() -> str:
     does &mdash; and were removed. The rest are over-used even against the corpus where they
     belong.</caption>
   </table></div>
+</section>
+
+<section>
+  <p class="kicker">The manual</p>
+  <h2>Or is it just what the manual says?</h2>
+  <p class="lede">The commit corpus settles whether a word belongs to the <em>register</em> of
+  software work. It cannot settle whether a word belongs to the <em>subject</em> of version
+  control, because commit messages use git&rsquo;s vocabulary without explaining it. So the
+  documentation itself was added: <b>Pro Git</b> and git&rsquo;s own reference manual,
+  {vcs_tokens:,} words of prose after code is stripped.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>word</th><th class="num">Claude /M</th>
+    <th class="num">git documentation /M</th><th class="num">ratio</th></tr></thead>
+    <tbody>{vcs_rows(version_control, 14)}</tbody>
+    <caption>{version_control.height} words are removed here. The documentation uses
+    <code>commit</code> at 6,383 per million against Claude&rsquo;s 3,788. A word must be both
+    <em>distinctive</em> to version-control writing and not out-used by Claude &mdash; without
+    the first condition the filter removes <code>the</code> and <code>only</code>, because git
+    documentation is ordinary dense prose and uses them at ordinary rates.</caption>
+  </table></div>
+  <div class="note"><b>This is a rate comparison, not a seventh corpus in the gate.</b> At a
+  third of a million words the documentation is far too small to join the minimum-z rule: a word
+  it happens never to use would have its z collapse for lack of evidence, which would look like
+  topical control and would really be F10 in the finding log. A direct rate ratio has no such
+  failure &mdash; a word the manual never uses simply scores infinity, which is the right
+  verdict.</div>
 </section>
 
 <section>

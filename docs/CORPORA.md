@@ -4,7 +4,7 @@ Provenance, licence, date cutoff and known contamination of every corpus. **Gene
 `data/output/meta_*.json` by `scripts/build_corpora_doc.py`** — do not hand-edit the numbers,
 regenerate them.
 
-Generated 2026-08-13T15:24:51+00:00.
+Generated 2026-08-13T19:39:40+00:00.
 
 ## Sizes as built
 

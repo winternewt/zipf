@@ -90,3 +90,33 @@ def test_a_wider_null_demands_a_higher_threshold() -> None:
 def test_empty_null_is_refused() -> None:
     with pytest.raises(ValueError, match="null distribution is empty"):
         empirical_threshold(np.array([np.nan, np.inf]))
+
+
+def test_version_control_filter_is_a_rate_ratio_not_a_significance_test() -> None:
+    """F10 is why: a min-z gate on a small corpus drops words for lack of evidence.
+
+    A rate-ratio filter has no such failure mode. A word the documentation never uses gets an
+    infinite ratio, which is the correct verdict — "not explained by version control" — rather
+    than a collapsed z that would read as "not over-used".
+    """
+    import polars as pl
+
+    from zipf.domain import VCS_EXPLAINED_RATIO
+
+    frame = pl.DataFrame(
+        {
+            "token": ["commit", "gap", "unseen"],
+            "target_per_million": [3788.0, 719.0, 500.0],
+            "vcs_per_million": [6383.0, 0.0, float("nan")],
+        }
+    ).with_columns(
+        is_version_control=(
+            pl.col("vcs_per_million").is_not_nan()
+            & (pl.col("vcs_per_million") > 0)
+            & (pl.col("target_per_million") < VCS_EXPLAINED_RATIO * pl.col("vcs_per_million"))
+        )
+    )
+    verdict = dict(zip(frame["token"], frame["is_version_control"], strict=True))
+    assert verdict["commit"] is True, "documentation uses it more than Claude does"
+    assert verdict["gap"] is False, "absent from the documentation is not explained by it"
+    assert verdict["unseen"] is False, "an unbuilt corpus explains nothing"

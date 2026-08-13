@@ -133,3 +133,33 @@ def test_strip_functions_are_pure(sample: str) -> None:
     strip_markdown(sample)
     strip_html(sample)
     assert sample == before
+
+
+def test_asciidoc_listing_blocks_are_removed() -> None:
+    """AsciiDoc fences with four or more hyphens, and literal blocks with dots."""
+    text = (
+        "Prose before.\n\n[source,console]\n----\n$ git commit -m zzqadoc\nzzqoutput\n----\n\n"
+        "Prose between.\n\n....\nzzqliteral\n....\n\nProse after.\n"
+    )
+    tokens = tokenize(text, preprocessor="asciidoc")
+    for fragment in ("zzqadoc", "zzqoutput", "zzqliteral", "source", "console"):
+        assert fragment not in tokens
+    assert {"prose", "before", "between", "after"} <= set(tokens)
+
+
+def test_asciidoc_monospace_and_crossrefs_are_removed() -> None:
+    tokens = tokenize("See <<ch02_zzqref>> and +zzqmono+ and `zzqtick` here.", preprocessor="asciidoc")
+    for fragment in ("zzqref", "zzqmono", "zzqtick", "ch"):
+        assert fragment not in tokens
+    assert {"see", "and", "here"} <= set(tokens)
+
+
+def test_markdown_setext_heading_is_not_treated_as_a_code_fence() -> None:
+    """The reason AsciiDoc has its own preprocessor.
+
+    A line of hyphens underneath text is a heading in markdown and a listing fence in AsciiDoc.
+    If the markdown stripper learned the AsciiDoc rule, every setext heading would open a code
+    block and swallow the document to the next one.
+    """
+    text = "A Heading\n----------\n\nzzqkept prose under the heading.\n"
+    assert "zzqkept" in tokenize(text, preprocessor="markdown")

@@ -213,6 +213,35 @@ Two instruments interpret the result, and they fail differently:
   the only instrument that sees a *private* vocabulary, one no public corpus contains and which
   specialisation therefore cannot score at all.
 
+## 3.8 The version-control instrument
+
+Two questions look alike and are not. *Is this word part of the register of software work?* is
+answered by a corpus of that register — commit messages — used as a baseline in the ordinary
+way. *Is this word simply the subject matter of version control?* is not, because commit
+messages use git's vocabulary without explaining it, at rates set by what people happen to be
+committing.
+
+The documentation answers the second question directly: Pro Git plus git's own reference manual,
+315,979 tokens of prose. A word is set aside as version-control vocabulary when **both** hold:
+
+1. the manual uses it at least four times more often than general English does — it is
+   *distinctive* to writing about version control; and
+2. Claude does not out-use the manual, its rate being under twice the manual's.
+
+**Both conditions are load-bearing.** Without the first, the filter flags any word the manual
+uses at a similar rate to Claude, which is most ordinary words, because git documentation is
+dense technical prose — the first version removed `the`, `one` and `only`. Without the second, a
+word the manual mentions once and Claude says constantly would be dismissed.
+
+**Why this is a rate comparison and not a seventh baseline.** At 316k tokens the corpus is far
+too small for the minimum-z rule. A candidate word it happens never to use would have its
+z collapse through the zero-count mechanism in F10, and the word would drop for lack of evidence
+while appearing to have been controlled for. A rate ratio has no such failure mode: a word the
+manual never uses scores infinity, which is exactly the right verdict.
+
+**Blind to:** anything git's documentation does not cover. Vocabulary from other tools —
+containers, CI, package managers — is not tested by this instrument at all.
+
 ## 4. What the method is blind to
 
 Stated plainly, because a check that cannot run is not a check that passed:

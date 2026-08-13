@@ -41,12 +41,14 @@ uv run zipf harvest
 
 step "3/8  fetch the reference corpora (skips what is already downloaded)"
 uv run zipf fetch --tier all
+# Two tarballs rather than a dataset, so it has its own builder.
+uv run python scripts/fetch_vcs_corpus.py
 
 step "4/8  count every corpus"
 # Claude first: the reference tiers need its vocabulary to size their per-part tables.
 uv run zipf count --corpus claude_main
 uv run zipf count --corpus claude_sidechain
-for tier in literature reddit technical web biomedical commits; do
+for tier in literature reddit technical web biomedical commits vcs; do
     uv run zipf count --corpus "$tier"
 done
 

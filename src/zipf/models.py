@@ -23,6 +23,7 @@ CORPUS_IDS: frozenset[str] = frozenset(
         "web",
         "biomedical",
         "commits",
+        "vcs",
     }
 )
 
@@ -46,6 +47,7 @@ REGISTERS: frozenset[str] = frozenset(
         "assistant",
         "biomedical",
         "engineering",
+        "documentation",
     }
 )
 

@@ -105,6 +105,36 @@ def strip_html(text: str) -> str:
     return text
 
 
+#: AsciiDoc delimited blocks: listing (----), literal (....), example (====) and passthrough
+#: (++++). Four or more of the character on a line of its own opens and closes the block.
+_ADOC_BLOCK = re.compile(r"(?ms)^(-{4,}|\.{4,}|={4,}|\+{4,})[ \t]*$.*?^\1[ \t]*$")
+#: A block macro or attribute line: [source,console], :sectnums:, ifdef::[] and friends.
+_ADOC_DIRECTIVE = re.compile(r"(?m)^(?:\[[^\]\n]*\]|:[\w!-]+:.*|ifn?def::.*|endif::.*|include::.*)$")
+#: AsciiDoc marks monospace with backticks or plus signs.
+_ADOC_MONO = re.compile(r"(?s)\+\+?([^+\n]{1,200})\+\+?")
+#: Cross-references and anchors: <<ref>>, [[anchor]], {attribute}.
+_ADOC_REF = re.compile(r"<<[^>\n]*>>|\[\[[^\]\n]*\]\]|\{[a-z][\w-]*\}")
+
+
+def strip_asciidoc(text: str) -> str:
+    """Remove code, directives and markup from AsciiDoc prose.
+
+    A separate preprocessor rather than an extension of the markdown one, because AsciiDoc's
+    listing fence is a line of four or more hyphens — which in markdown is a setext heading
+    underline. Teaching :func:`strip_markdown` about it would make every markdown heading open
+    a code block and swallow the rest of the document until the next one.
+    """
+    text = _ADOC_BLOCK.sub(" ", text)
+    text = _ADOC_DIRECTIVE.sub(" ", text)
+    text = _INLINE_CODE.sub(" ", text)
+    text = _ADOC_MONO.sub(" ", text)
+    text = _ADOC_REF.sub(" ", text)
+    text = _HTML_TAG.sub(" ", text)
+    text = _URL.sub(" ", text)
+    text = _PATH.sub(" ", text)
+    return text
+
+
 def strip_plain(text: str) -> str:
     """Remove only URLs and paths. For corpora that carry no markup (Gutenberg)."""
     text = _URL.sub(" ", text)
@@ -117,6 +147,7 @@ PREPROCESSORS = {
     "markdown": strip_markdown,
     "html": strip_html,
     "plain": strip_plain,
+    "asciidoc": strip_asciidoc,
 }
 
 
