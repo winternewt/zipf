@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Environment
+.env
+
+# Editor junk
+*.swp
+.*.swp
+*~
+.DS_Store
+
+# Data: ignore everything, then allowlist what must travel.
+# Adding another committed subtree needs explicit `!<dir>/` AND `!<dir>/**`.
+data/*

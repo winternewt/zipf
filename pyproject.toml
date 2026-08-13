@@ -1,0 +1,40 @@
+[project]
+name = "zipf"
+version = "0.1.0"
+description = "Frequency-histogram comparison of Claude Code reply prose against human reference corpora"
+readme = "README.md"
+authors = [
+    { name = "winternewt", email = "isoutthere@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "polars>=1.17",
+    "pyarrow>=18.0",
+    "numpy>=2.1",
+    "scipy>=1.14",
+    "pydantic>=2.10",
+    "typer>=0.15",
+    "python-dotenv>=1.0",
+    "platformdirs>=4.3",
+    "httpx>=0.28",
+    "tqdm>=4.67",
+    "zstandard>=0.23",
+    "huggingface-hub>=0.27",
+    "matplotlib>=3.10",
+]
+
+[project.scripts]
+zipf = "zipf.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
