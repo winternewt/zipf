@@ -2,15 +2,18 @@
 
 Measures which words Claude Code overuses.
 
-It harvests the prose half of local Claude Code transcripts, tokenizes it identically to five
+It harvests the prose half of local Claude Code transcripts, tokenizes it identically to six
 human-written reference corpora, and ranks the vocabulary by how far each word's rate departs
 from **all** of them.
+
+**[Read the report →](https://claude.ai/code/artifact/173e7488-ac54-4718-b2c9-72b5126a90fe)**
+— the findings, the corrections that produced them, and what the method is blind to.
 
 **This is not a detector.** It compares aggregate rates between corpora. There is no
 per-document verdict, and nothing here can tell you whether a particular text was written by a
 model.
 
-## Why five baselines
+## Why six baselines
 
 A single baseline cannot separate *style* from *topic*. Compare assistant prose to Victorian
 novels and the top of the list is `file`, `function`, `commit` — true, and useless, because it
@@ -23,6 +26,13 @@ describes what the text is about rather than how it is written.
 | `technical` | StackOverflow, pre-2022 | **topic** — same subject, same markdown, same fenced code |
 | `web` | Common Crawl `CC-MAIN-2021-04` | any single-source quirk |
 | `biomedical` | PubMed abstracts, oldest PMIDs | **the target's own subject** — bioinformatics vocabulary |
+| `commits` | 1.48 M commit messages, pre-2022 | **engineering register** — `commit`, `bump`, `revert`, `stale` |
+
+And one corpus that is read as an instrument rather than used as a gate: **Pro Git plus git's own
+reference manual**, 316 k words. It answers "is this word simply the vocabulary of version
+control?" — `commit` runs at 6,383 per million there against Claude's 3,788. It is deliberately
+not a seventh baseline: at that size a word it never uses would fail for lack of evidence rather
+than because it was controlled for.
 
 The ranking statistic is the **minimum** z across tiers, so a word cannot be carried by one
 extreme baseline. Every tier predates the period when generated text became common, which
@@ -60,7 +70,7 @@ Two things to keep in mind, both measured rather than assumed:
   a biomedical tier and why every word carries a specialisation score.
 - The significance threshold is **read off the null distribution** (z ≥ 4.69 at 1% FPR), not
   assumed. The conventional 3.00 is 56% too lenient on a corpus with this much topical spread.
-- Successive corrections take 2,355 candidates → 735 → 477 → 431 → **352 style words**.
+- Successive corrections take 2,355 candidates → 735 → 359 → 323 → 276 → **248 style words**.
 
 `docs/METHODOLOGY.md` says what each statistic is blind to. `docs/CORPORA.md` carries the
 provenance, licence and contamination note for every corpus.

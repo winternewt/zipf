@@ -45,6 +45,8 @@ TIER_LABEL = {
     "technical": "Stack Overflow",
     "web": "Common Crawl",
     "biomedical": "PubMed",
+    "commits": "commit msgs",
+    "vcs": "git manual",
 }
 
 # --- palette -----------------------------------------------------------------------------
@@ -210,11 +212,14 @@ def word_rows(frame: pl.DataFrame, tiers: list[str], limit: int) -> str:
             f'<td class="num soft">{(row.get(f"per_million_{t}") or 0.0):,.1f}</td>'
             for t in tiers
         )
+        manual = row.get("vcs_per_million")
+        manual_cell = "&mdash;" if manual is None or not math.isfinite(manual) else f"{manual:,.0f}"
         spec = row.get("specialisation")
         spec_cell = "&mdash;" if spec is None or not math.isfinite(spec) else f"{spec:+.1f}"
         out.append(
             f"<tr><td class='rank'>{i}</td><td class='word'>{esc(row['token'])}</td>"
             f"<td class='num claude'>{row['target_per_million']:,.0f}</td>{cells}"
+            f"<td class='num human'>{manual_cell}</td>"
             f"<td class='num ratio'>{ratio_text(word_ratio(row, tiers))}</td>"
             f"<td class='num soft'>{row['z_min']:,.0f}</td>"
             f"<td class='num soft'>{spec_cell}</td>"
@@ -449,6 +454,8 @@ def build() -> str:
 
     claude_meta = meta("claude_main")
     corpora = [(cid, meta(cid)) for cid in ("claude_main", *tiers)]
+    if (OUTPUT_DIR / "meta_vcs.json").exists():
+        corpora.append(("vcs", meta("vcs")))
     reference_tokens = sum(m["stats"]["tokens"] for cid, m in corpora if cid != "claude_main")
     documents = pl.read_parquet(DOCUMENTS_PARQUET).filter(pl.col("corpus_id") == "claude_main")
     project_count = int(documents["project"].n_unique())
@@ -465,7 +472,8 @@ def build() -> str:
         f"<td class='soft'>{esc(m['spec']['text_register'])}</td>"
         f"<td class='num'>{m['stats']['tokens']:,}</td>"
         f"<td class='num soft'>{m['stats']['types']:,}</td>"
-        f"<td class='soft'>{esc(m['spec']['date_cutoff'] or 'n/a')}</td></tr>"
+        f"<td class='soft'>{esc(m['spec']['date_cutoff'] or 'n/a')}</td>"
+        f"<td class='soft'>{'instrument' if cid == 'vcs' else ('target' if cid.startswith('claude') else 'baseline')}</td></tr>"
         for cid, m in corpora
     )
 
@@ -597,9 +605,11 @@ def build() -> str:
   </div>
   <h1>What Claude Code says too often</h1>
   <p class="standfirst">{claude_meta['stats']['tokens']:,} words of assistant prose measured
-  against {reference_tokens / 1e6:,.0f} million words of human writing. A word is reported only
-  if it is over-used against <em>every</em> corpus, survives having its inflected forms merged,
-  and clears a threshold calibrated from this corpus&rsquo;s own null distribution.</p>
+  against {reference_tokens / 1e6:,.0f} million words of human writing &mdash; literature,
+  Reddit, Stack Overflow, a web crawl, PubMed and 1.5 million commit messages &mdash; then
+  checked once more against git&rsquo;s own manual. A word is reported only if it is over-used
+  against <em>every</em> corpus, survives having its inflected forms merged, and clears a
+  threshold calibrated from this corpus&rsquo;s own null distribution.</p>
 </header>
 
 <section>
@@ -666,6 +676,7 @@ def build() -> str:
   &mdash; so it reads the ranking without contaminating it.</p>
   <div class="scroll"><table>
     <thead><tr><th></th><th>word</th><th class="num">Claude /M</th>{tier_heads}
+    <th class="num">git manual</th>
     <th class="num">vs hardest</th><th class="num">min z</th><th class="num">spec</th>
     <th class="num">proj DP</th><th class="num">sessions</th></tr></thead>
     <tbody>{word_rows(style, tiers, 60)}</tbody>
@@ -778,9 +789,12 @@ def build() -> str:
   </ul>
   <div class="scroll"><table>
     <thead><tr><th>corpus</th><th>register</th><th class="num">words</th>
-    <th class="num">types</th><th>dated to</th></tr></thead>
+    <th class="num">types</th><th>dated to</th><th>role</th></tr></thead>
     <tbody>{corpus_rows}</tbody>
-    <caption>Every human corpus predates the period when generated text became common online.
+    <caption>A <em>baseline</em> is one of the corpora a word must clear. The
+    <em>instrument</em> is read as a rate comparison only &mdash; at 316k words it is too small
+    to gate with, for the reason in the note above.
+    Every human corpus predates the period when generated text became common online.
     Contamination would make a baseline more Claude-like and shrink the measured gap, so the
     bias runs toward finding nothing &mdash; surviving results are conservative.</caption>
   </table></div>
