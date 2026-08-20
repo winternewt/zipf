@@ -15,6 +15,7 @@ and contrast checks. Changing them means re-running that validator.
 
 from __future__ import annotations
 
+import collections
 import html
 import json
 import math
@@ -34,7 +35,10 @@ from zipf.domain import DOMAIN_THRESHOLD, empirical_threshold
 from zipf.harvest import DOCUMENTS_PARQUET
 from zipf.models import REFERENCE_TIERS
 from zipf.nulltest import run_null_test
+from zipf.ngrams import iter_ngrams
 from zipf.paths import ASSETS_DIR, OUTPUT_DIR
+from zipf.pipeline import load_totals
+from zipf.tokenize import iter_tokens
 from zipf.pipeline import meta_path
 
 GENERAL = ("literature", "reddit", "web")
@@ -133,17 +137,18 @@ def dumbbell(rows: list[dict], tiers: list[str], *, count: int = 18) -> str:
     throws away. The axis is logarithmic because the rates span four orders of magnitude; on a
     linear axis every human rate would collapse onto the left edge.
     """
-    # Rows keep the report's own ranking (minimum z), rather than being re-sorted by the ratio
-    # the chart draws. Sorting by ratio was tried and rejected: it promotes `rm`, `hf` and `dep`
-    # — technical abbreviations no human corpus contains, so their ratio is enormous and their
-    # evidence is thin. That is precisely why the method ranks by z, and a chart that contradicts
-    # its own report's ordering teaches the reader the wrong lesson about which words matter.
+    # Ordered by ratio, matching the tables and this chart's own title. An earlier version
+    # ranked by z to avoid promoting thin technical abbreviations; the domain and
+    # version-control filters have since removed almost all of them, and the one that remains
+    # is named in the caption rather than quietly dropped.
     data = []
-    for row in rows[:count]:
+    for row in rows:
         human = hardest_rate(row, tiers)
         claude = row["target_per_million"]
         if human > 0 and claude > 0:
             data.append((row["token"], human, claude, claude / human))
+    data.sort(key=lambda d: (-d[3], d[0]))
+    data = data[:count]
     if not data:
         return ""
 
@@ -205,9 +210,20 @@ def dumbbell(rows: list[dict], tiers: list[str], *, count: int = 18) -> str:
 # --- tables ------------------------------------------------------------------------------
 
 
+def by_ratio(frame: pl.DataFrame, tiers: list[str]) -> list[dict]:
+    """Rows ordered by rate against the toughest human corpus, ties broken on the token.
+
+    Ratio rather than z, because that is the quantity the page displays and the chart is named
+    after. The cost is stated in the captions: ratio rewards rarity, so an abbreviation rises,
+    and a very frequent word that clears significance on a small margin drops out entirely.
+    """
+    rows = list(frame.iter_rows(named=True))
+    return sorted(rows, key=lambda r: (-word_ratio(r, tiers), r["token"]))
+
+
 def word_rows(frame: pl.DataFrame, tiers: list[str], limit: int) -> str:
     out = []
-    for i, row in enumerate(frame.head(limit).iter_rows(named=True), start=1):
+    for i, row in enumerate(by_ratio(frame, tiers)[:limit], start=1):
         cells = "".join(
             f'<td class="num soft">{(row.get(f"per_million_{t}") or 0.0):,.1f}</td>'
             for t in tiers
@@ -230,10 +246,15 @@ def word_rows(frame: pl.DataFrame, tiers: list[str], limit: int) -> str:
 
 
 def ngram_rows(frame: pl.DataFrame, limit: int) -> str:
+    def ratio_of(r: dict) -> float:
+        best = r["best_reference_per_million"]
+        return r["target_per_million"] / best if best > 0 else float("inf")
+
     out = []
-    for i, row in enumerate(frame.head(limit).iter_rows(named=True), start=1):
+    ordered = sorted(frame.iter_rows(named=True), key=lambda r: (-ratio_of(r), r["ngram"]))
+    for i, row in enumerate(ordered[:limit], start=1):
         best = row["best_reference_per_million"]
-        ratio = row["target_per_million"] / best if best > 0 else float("inf")
+        ratio = ratio_of(row)
         out.append(
             f"<tr><td class='rank'>{i}</td><td class='word'>{esc(row['ngram'])}</td>"
             f"<td class='num claude'>{row['target_per_million']:,.0f}</td>"
@@ -267,6 +288,69 @@ def register_rows(frame: pl.DataFrame, words: list[str], survivors: set[str]) ->
             f"<td class='num human'>{commits:,.0f}</td>"
             f"<td class='num ratio'>{ratio_text(ratio)}</td>"
             f"<td>{verdict}</td></tr>"
+        )
+    return "\n".join(out)
+
+
+#: What the cartoon claimed, and how each claim has to be measured. A single word is a token; a
+#: family is a set of surface forms; a frame is a template whose fills are individually too rare
+#: to rank. Measuring the first where the truth is the third is the error recorded as F14.
+MEME_CLAIMS = [
+    ("load-bearing", "word", ["load-bearing"]),
+    ("genuinely", "word", ["genuinely"]),
+    ("deliberately / intentional", "family", ["deliberately", "deliberate", "intentional"]),
+    ("full picture", "frame-before", ["picture"]),
+    ("all green", "bigram", ["all green"]),
+    ("worth separating", "frame-after", ["worth"]),
+    ("just say the word", "bigram", ["say the"]),
+    ("a genuinely sharp point", "family", ["sharp", "sharply", "sharper", "sharpen", "sharpens"]),
+    ("intentional seams", "family", ["seam", "seams", "seamless", "seamlessly"]),
+    ("the wedge", "family", ["wedge", "wedges", "wedged"]),
+    # Measured alone. Bundling it with `fine-grained`, which Claude does use, would rescue a
+    # failed prediction by arithmetic — the caption says coarse.
+    ("coarse-grained salt", "family", ["coarse-grained"]),
+    ("substrate", "family", ["substrate", "substrates"]),
+    ("with teeth", "family", ["teeth", "tooth"]),
+]
+
+
+def meme_rows(claude: dict, cn: int, general: dict, gn: int, bigrams, n2: int, refmap: dict) -> str:
+    """Measure each cartoon claim at the unit it actually lives at."""
+    out = []
+    for label, kind, forms in MEME_CLAIMS:
+        if kind in ("word", "family"):
+            c = sum(claude.get(f, 0) for f in forms) / cn * 1e6
+            g = sum(general.get(f, 0) for f in forms) / gn * 1e6
+            unit = "word" if kind == "word" else "word family"
+        elif kind == "bigram":
+            ph = forms[0]
+            c = bigrams.get(ph, 0) / n2 * 1e6
+            g = refmap.get(ph, 0.0) or 0.0
+            unit = "phrase"
+        else:
+            # A frame has a direction. `[modifier] picture` takes the head last; `worth [verb]`
+            # takes it first. Matching either position pulls in `is worth` and `picture of`,
+            # which belong to different constructions and inflate the count.
+            head = forms[0]
+            position = 1 if kind == "frame-before" else 0
+            hits = {p: k for p, k in bigrams.items() if p.split()[position] == head}
+            c = sum(hits.values()) / n2 * 1e6
+            g = max((refmap.get(p, 0.0) or 0.0) for p in hits) if hits else 0.0
+            unit = f"frame, {len(hits)} fills"
+        ratio = c / g if g > 0 else float("inf")
+        if c < 1:
+            verdict, cls = "not in the corpus", "fail"
+        elif ratio >= 4:
+            verdict, cls = "confirmed", "pass"
+        elif ratio < 1:
+            verdict, cls = "used less than humans", "fail"
+        else:
+            verdict, cls = "too weak to report", "fail"
+        out.append(
+            f"<tr><td class='word'>{esc(label)}</td><td class='soft'>{unit}</td>"
+            f"<td class='num claude'>{c:,.0f}</td><td class='num soft'>{g:,.2f}</td>"
+            f"<td class='num ratio'>{ratio_text(ratio)}</td>"
+            f"<td><span class='tag {cls}'>{verdict}</span></td></tr>"
         )
     return "\n".join(out)
 
@@ -440,9 +524,14 @@ def build() -> str:
     passes = (pl.col("tiers_agreeing") == pl.col("tiers_compared")) & pl.col("well_dispersed")
     qualifying = wide.filter(passes)
     recalibrated = qualifying.filter(pl.col("clears_empirical"))
-    style = recalibrated.filter(
-        ~pl.col("is_domain") & ~pl.col("is_version_control")
-    ).sort(["z_min", "token"], descending=[True, False])
+    # Ranked by rate against the toughest corpus, the same order the tables and chart display,
+    # so a rank quoted in a verdict points at the row the reader can see. Ties break on the
+    # token: two runs must rank identically.
+    style = recalibrated.filter(~pl.col("is_domain") & ~pl.col("is_version_control"))
+    style = style.with_columns(
+        _ratio=pl.max_horizontal([pl.col(f"per_million_{t}") for t in tiers]).pow(-1)
+        * pl.col("target_per_million")
+    ).sort(["_ratio", "token"], descending=[True, False])
     domain = recalibrated.filter(pl.col("is_domain"))
     version_control = recalibrated.filter(pl.col("is_version_control"))
     survivors = set(style["token"])
@@ -460,7 +549,26 @@ def build() -> str:
     documents = pl.read_parquet(DOCUMENTS_PARQUET).filter(pl.col("corpus_id") == "claude_main")
     project_count = int(documents["project"].n_unique())
 
+    claude_counts, claude_n = load_totals("claude_main")
+    gen_counts: dict[str, int] = {}
+    gen_n = 0
+    for t in GENERAL:
+        tot, size = load_totals(t)
+        for w, c in tot.items():
+            gen_counts[w] = gen_counts.get(w, 0) + c
+        gen_n += size
+    # Bigrams are recomputed rather than read from the candidate table: the frames below are
+    # made of fills that are individually far below that table's floor.
+    bigram_counts: collections.Counter[str] = collections.Counter()
+    bigram_n = 0
+    for text in documents["text"]:
+        toks = list(iter_tokens(str(text), preprocessor="markdown"))
+        grams = list(iter_ngrams(toks, 2))
+        bigram_counts.update(grams)
+        bigram_n += len(grams)
+
     bigrams = pl.read_parquet(OUTPUT_DIR / "overuse_ngram_2.parquet")
+    refmap = dict(zip(bigrams["ngram"], bigrams["best_reference_per_million"], strict=True))
     let_me = bigrams.filter(pl.col("ngram") == "let me")
     let_me_rate = float(let_me["target_per_million"][0]) if let_me.height else 0.0
     best_human = float(let_me["best_reference_per_million"][0]) if let_me.height else 0.0
@@ -643,11 +751,12 @@ def build() -> str:
     <p class="legend"><span><i class="lh"></i>toughest human corpus</span>
     <span><i class="lc"></i>Claude Code</span></p>
     <div class="chartbox">{chart}</div>
-    <figcaption>The top 18 style words, in the report&rsquo;s own ranking. <code>the</code> is
-    the instructive row: its two marks nearly touch, because Claude uses it only about 6% more
-    than the human corpus that uses it most &mdash; but at 86,000 occurrences per million, 6% is
-    overwhelming evidence. Large gaps and strong evidence are not the same thing, which is why
-    the ranking is by z-score and not by ratio.</figcaption>
+    <figcaption>The 18 largest gaps. Ordering by ratio has two costs worth naming.
+    <code>hf</code> rises because ratio rewards rarity, and it is an abbreviation rather than a
+    habit. And <code>the</code> vanishes from this view although it clears every gate: Claude
+    uses it only about 6% more than the corpus that uses it most, but at 86,000 occurrences per
+    million that 6% is overwhelming evidence. A large gap and strong evidence are not the same
+    thing.</figcaption>
   </figure>
 </section>
 
@@ -680,7 +789,8 @@ def build() -> str:
     <th class="num">vs hardest</th><th class="num">min z</th><th class="num">spec</th>
     <th class="num">proj DP</th><th class="num">sessions</th></tr></thead>
     <tbody>{word_rows(style, tiers, 60)}</tbody>
-    <caption>Top 60 of {style.height}. <em>Proj DP</em> is dispersion across the
+    <caption>Top 60 of {style.height}, by rate against the toughest human corpus.
+    <em>Proj DP</em> is dispersion across the
     {project_count} projects: 0 means used everywhere, 1 means confined to one repository.</caption>
   </table></div>
 </section>
@@ -697,10 +807,33 @@ def build() -> str:
 
 <section>
   <p class="kicker">Predictions, tested</p>
-  <h2>The words named in advance</h2>
-  <p class="lede">Named before the corpus existed, which makes them a test of the method rather
+  <h2>Named in advance</h2>
+  <p class="lede">Guessed before the corpus existed, which makes them a test of the method rather
   than an output of it.</p>
   <div class="verdicts">{"".join(verdicts)}</div>
+
+  <h3>A second set, drawn rather than typed</h3>
+  <p class="lede">Someone sent a cartoon of a restaurant called <em>Full Picture</em>, in which
+  every object on the table is captioned with one of these habits &mdash; load-bearing sauce,
+  freshly ground truth, coarse-grained salt, a genuinely sharp point, all green, two sides
+  <em>and it&rsquo;s worth separating them</em>. It was drawn by a reader who had never seen a
+  frequency table. Measured the same way as everything else:</p>
+  <div class="scroll"><table>
+    <thead><tr><th>caption</th><th>measured as</th><th class="num">Claude /M</th>
+    <th class="num">best human /M</th><th class="num">ratio</th><th>verdict</th></tr></thead>
+    <tbody>{meme_rows(claude_counts, claude_n, gen_counts, gen_n, bigram_counts, bigram_n, refmap)}</tbody>
+    <caption>Roughly two thirds land, and the misses are informative in both directions.
+    <code>substrate</code> and <code>coarse-grained</code> do not occur at all, and
+    <code>teeth</code> is used <em>less</em> than humans use it &mdash; yet those captions read
+    as exactly as characteristic as the ones that are 500x. Intuition has good recall on the
+    shape of a habit and poor precision on its instances, which is the argument for measuring.</caption>
+  </table></div>
+  <div class="note"><b>The reader also found what the tool cannot see.</b> Two of these captions
+  quote no string in the corpus at all. <code>worth separating</code> occurs zero times &mdash;
+  but <code>worth [verb-ing]</code> runs at 672 per million across 60 different verbs, and
+  <code>full picture</code> is one filling of a frame that takes 23. Every individual filling is
+  too rare to rank, so the word-by-word ranking on this page is blind to both, and a person
+  reading the output inferred them anyway.</div>
 </section>
 
 <section>
