@@ -174,3 +174,75 @@ for the measurement rather than a footnote to it.
 drifts over time, the corpus-wide figure is an average over a moving target and every reported
 rate is a smear rather than a value. Testing it needs per-session rates plotted against session
 date, which the harvested data already supports and nothing currently does.
+
+## F12 — the signal is concentration, and the tool cannot measure it
+
+*found:* testing "it's the adjectives and adverbs" against the corpora · *status:* open ·
+*class:* **capability gap — the missing feature is the result**
+
+The claim was that the overuse lives in modifiers. Measured as *classes*, it is false, and
+comfortably so:
+
+| class | Claude /M | toughest human /M | ratio |
+|---|---:|---:|---:|
+| `-ly` adverbs | 11,630 | 14,936 (Reddit) | **0.8x** |
+| adjective suffixes (-ous, -ive, -able, -ic, …) | 21,578 | 69,581 (PubMed) | **0.3x** |
+| hyphenated compounds | 29,492 | 17,487 (PubMed) | 1.7x |
+
+Claude uses *fewer* adverbs and far fewer adjectives than humans do. But the intuition behind
+the claim is correct, and the right measurement finds it immediately:
+
+| corpus | distinct `-ly` types | share of adverb usage in top 20 |
+|---|---:|---:|
+| **claude_main** | **327** | **69.0%** |
+| Gutenberg | 4,157 | 24.2% |
+| Common Crawl | 5,458 | 35.1% |
+| PubMed | 4,778 | 35.9% |
+| Stack Overflow | 4,539 | 49.1% |
+| Reddit | 4,989 | 50.1% |
+| commit messages | 1,942 | 52.9% |
+
+**An order of magnitude fewer adverb types, and two thirds of all adverb usage concentrated in
+twenty words.** The tic is not "too many adverbs" — it is the same twenty, relentlessly:
+`cleanly` 295x general English, `explicitly` 54x, `silently` 47x, `deliberately` 36x,
+`genuinely` 34x, `correctly` 23x, `precisely` 17x, `exactly` 12x.
+
+**The gap.** Every number in the two tables above was computed by hand at a shell, because the
+pipeline has no notion of vocabulary *concentration*. It ranks individual words against
+baselines and has no way to ask "is this corpus's usage spread across its vocabulary or piled
+into a few types?" — which is, on this evidence, the stronger signal of the two. Per-class type
+counts, a top-N mass share, and the type-token curve are all computable from tables already on
+disk. This is `ROADMAP.md` RM10.
+
+A caution for whoever builds it: the hyphenated-compound figure above is **partly an artifact**.
+The class contains genuine compound modifiers (`byte-identical`, `load-bearing`, `round-trip`,
+`self-contained`) and also project identifiers (`just-prs`, `ld-proxy`, `per-pgs`), and the
+second group is topical rather than stylistic. Splitting them needs the identifier filter the
+tokenizer deliberately does not apply.
+
+## F13 — "too polite" is measurably false in this corpus, and the opposite is true
+
+*found:* testing whether the caricature's "with teeth" is about hedging · *status:* open ·
+*class:* **observation, with a scope warning**
+
+| class | Claude /M | general English /M | ratio |
+|---|---:|---:|---:|
+| politeness markers (`please`, `sorry`, `happy`, `apologies`) | 56 | 888 | **0.1x** |
+| concession (`however`, `although`, `nevertheless`) | 145 | 1,280 | **0.1x** |
+| hedges (`perhaps`, `somewhat`, `arguably`, `roughly`) | 303 | 1,852 | **0.2x** |
+| modal softeners (`might`, `may`, `could`, `would`) | 2,574 | 6,924 | 0.4x |
+| insistence (`actually`, `genuinely`, `exactly`, `precisely`) | 3,937 | 2,213 | **1.8x** |
+| blunt verbs (`wrong`, `broken`, `fails`, `refuse`) | 2,035 | 438 | **4.7x** |
+
+`perhaps` and `somewhat` occur **zero times** in 428,000 words. `please` and `sorry` run at a
+tenth of the human rate; `wrong` at 4.2x and `refuse` at 2.6x.
+
+Whatever this prose is doing, it is not hedging. What is inflated is *insistence* — `rather` at
+7.6x, `actually` at 4.8x, `exactly` at 12x — the vocabulary of claiming precision rather than of
+softening a claim.
+
+**Scope warning, and it is a large one.** This corpus is one author's sessions with one user,
+whose own register is terse and technical. Register is negotiated between both parties, so this
+measures a *relationship*, not a model. The same instrument pointed at sessions with a different
+user could easily produce the opposite table, and nothing here licenses a claim about Claude
+Code in general.

@@ -99,3 +99,28 @@ null, it makes the baseline partly the thing being measured.
 
 Filling this needs either the gated dataset with credentials, or a fresh scrape of permissively
 licensed issue threads with a pre-2022 cutoff.
+
+## RM10 — No measure of vocabulary concentration
+
+*severity:* **high** · *status:* open · *owner:* unassigned
+
+The pipeline ranks individual words against baselines. It cannot ask whether a corpus's usage is
+spread across its vocabulary or piled into a few types — and on the evidence in F12 that is the
+stronger signal. Claude uses *fewer* adverbs than every human corpus while having an order of
+magnitude fewer distinct ones (327 against 4,000-5,500) and concentrating 69% of adverb usage in
+twenty words, against 24-53% for humans.
+
+A word-by-word ranking cannot express that, and the whole project's headline framing —
+"overused vocabulary" — is arguably the weaker half of what the data shows.
+
+What it needs, all computable from tables already on disk:
+
+- per-class type counts and top-N mass share, for any regex-defined class;
+- the type-token curve per corpus, sampled at matched sizes so the comparison is fair — this is
+  the trap, since type counts grow with corpus size and Claude's corpus is 140x smaller than the
+  reference tiers, which *inflates* the apparent gap and must be corrected before any figure is
+  published;
+- a concentration statistic with a name and a citation rather than an ad-hoc share.
+
+Until the size correction is done, the F12 numbers are directional and should not be quoted as
+measurements.
