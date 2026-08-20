@@ -131,3 +131,46 @@ evidence lives in.
 Until then the report states the limitation in the Limits section and declines to claim the
 four-word chains, while still reporting `let me` itself, which clears all six corpora on its own
 evidence at z 19.
+
+## F11 — the instrument turned on its own author, from a cartoon
+
+*found:* a user-drawn cartoon labelling a dinner table with the assistant's own tics ·
+*status:* open · *class:* **observation, with one real limitation**
+
+The charter's standing probe is "turn the tool on the work you just did". The occasion arrived
+unprompted: a drawing of *Full Picture Restaurant*, in which every object is captioned with a
+phrase from these very sessions — `load-bearing sauce`, `freshly ground truth`,
+`coarse-grained salt`, `a genuinely sharp point`, `all green`, `two sides (and it's worth
+separating them)`.
+
+Measured against the built corpora, the caricature is **about half accurate**, and the half it
+gets right it gets right by a wide margin.
+
+Landed, against pooled general English:
+
+| term | Claude /M | general English /M | ratio |
+|---|---:|---:|---:|
+| `load-bearing` | 126 | 0.2 | **597x** |
+| `all green` | 110 | 0.87 | **126x** |
+| `full picture` | 91 | 0.83 | **110x** |
+| `deliberately` | 364 | 10.0 | 36x |
+| `genuinely` | 483 | 14.3 | 34x |
+| `a genuine` | 105 | 6.6 | 16x |
+| `intentional` | 56 | 4.9 | 12x |
+
+Invented by the artist — these do not occur in the corpus at all: `coarse-grained` (0),
+`substrate` (0), `with teeth` (0), `belt and suspenders` (0), `genuinely sharp` (0). And
+`teeth` runs at 9 per million against 50 in general English: **used five times less** than
+humans use it.
+
+**The limitation this exposes.** A caricature is a hypothesis, and half of this one was wrong in
+a direction no reader could have detected by intuition — the invented terms *feel* exactly as
+characteristic as the real ones. That is the project's premise inverted, and it is the argument
+for the measurement rather than a footnote to it.
+
+**The open question.** In the 6,079 tokens of the authoring session itself that had reached disk,
+`genuinely` ran at **1,152 per million** against 483 corpus-wide, and `honest` at 494 against
+219. A single small sample proves nothing, but if the rate of these words varies by session or
+drifts over time, the corpus-wide figure is an average over a moving target and every reported
+rate is a smear rather than a value. Testing it needs per-session rates plotted against session
+date, which the harvested data already supports and nothing currently does.
