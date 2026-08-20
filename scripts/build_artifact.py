@@ -723,6 +723,43 @@ def build() -> str:
 </section>
 
 <section>
+  <p class="kicker">Shape</p>
+  <h2>The stronger signal is not which words, but how few</h2>
+  <p class="lede">Everything above ranks words one at a time. That framing turns out to be the
+  weaker half of what the data shows, and a reader spotted it before the pipeline did.</p>
+  <p class="col">Claude uses <em>fewer</em> adverbs than every human corpus here &mdash; 11,630
+  per million against Reddit&rsquo;s 14,936 &mdash; and far fewer adjectives. By the ranking
+  above, modifiers are unremarkable. But two thirds of all its adverb usage sits in
+  <b>twenty words</b>:</p>
+  <div class="scroll"><table>
+    <thead><tr><th>corpus</th><th class="num">share of adverb use in its top 20</th></tr></thead>
+    <tbody>
+      <tr><td class='word'>claude_main</td><td class='num claude'>68.9%</td></tr>
+      <tr><td class='word'>commit msgs</td><td class='num soft'>53.6%</td></tr>
+      <tr><td class='word'>reddit</td><td class='num soft'>50.5%</td></tr>
+      <tr><td class='word'>technical</td><td class='num soft'>49.2%</td></tr>
+      <tr><td class='word'>biomedical</td><td class='num soft'>35.8%</td></tr>
+      <tr><td class='word'>web</td><td class='num soft'>35.6%</td></tr>
+      <tr><td class='word'>literature</td><td class='num soft'>24.6%</td></tr>
+    </tbody>
+    <caption>Rarefied by multinomial resampling to the target corpus&rsquo;s own 428,453 tokens,
+    because type counts grow with sample size and the reference corpora are 140x larger. The
+    mass share is a ratio and barely moves under that correction &mdash; 68.9% either way. A
+    first, uncorrected reading of the same data claimed an order-of-magnitude gap in the number
+    of distinct adverbs; at matched size that gap is 1.2x to 3.2x, and the claim was withdrawn.</caption>
+  </table></div>
+  <p class="col">The same shape appears as a template rather than a word.
+  <code>worth separating</code> occurs zero times, but <code>worth [verb-ing]</code> runs at 672
+  per million across 60 different verbs &mdash; <code>worth flagging</code> alone at 124 against
+  <b>0.00</b> in 286 million words of human writing. Every individual filling falls below the
+  reporting floor, so the ranking above cannot see the frame that generates them.</p>
+  <div class="note"><b>This is a limitation, not a result.</b> The pipeline measures words. These
+  two figures were computed by hand, because it has no notion of vocabulary concentration or of
+  a productive template. On this evidence that is the bigger half of the phenomenon, and the
+  page&rsquo;s own title is the smaller one.</div>
+</section>
+
+<section>
   <p class="kicker">The manual</p>
   <h2>Or is it just what the manual says?</h2>
   <p class="lede">The commit corpus settles whether a word belongs to the <em>register</em> of

@@ -202,8 +202,27 @@ the claim is correct, and the right measurement finds it immediately:
 | Reddit | 4,989 | 50.1% |
 | commit messages | 1,942 | 52.9% |
 
-**An order of magnitude fewer adverb types, and two thirds of all adverb usage concentrated in
-twenty words.** The tic is not "too many adverbs" — it is the same twenty, relentlessly:
+**CORRECTED — the type counts above are size-confounded and the first reading of them was
+wrong.** Type counts grow with sample size, and the target corpus is 140x smaller than the
+reference tiers, so "an order of magnitude fewer types" was an artifact. Rarefied by multinomial
+resampling to the target's own 428,453 tokens, five draws each:
+
+| corpus | `-ly` types at matched size | top-20 share |
+|---|---:|---:|
+| **claude_main** | **282** | **68.9%** |
+| commit messages | 350 | 53.6% |
+| Stack Overflow | 480 | 49.2% |
+| Reddit | 595 | 50.5% |
+| PubMed | 681 | 35.8% |
+| Common Crawl | 686 | 35.6% |
+| Gutenberg | 906 | 24.6% |
+
+The type gap survives but shrinks from ~15x to between **1.2x and 3.2x**. The *concentration*
+figure is the durable one: it is essentially unmoved by rarefaction (68.9% raw and rarefied;
+Gutenberg 24.2% raw against 24.6% rarefied), because a mass share is a ratio rather than a count.
+
+So the honest statement is the second half only: **two thirds of all adverb usage sits in twenty
+words, against a quarter to a half for humans.** The tic is not "too many adverbs" — it is the same twenty, relentlessly:
 `cleanly` 295x general English, `explicitly` 54x, `silently` 47x, `deliberately` 36x,
 `genuinely` 34x, `correctly` 23x, `precisely` 17x, `exactly` 12x.
 

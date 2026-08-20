@@ -122,5 +122,9 @@ What it needs, all computable from tables already on disk:
   published;
 - a concentration statistic with a name and a citation rather than an ad-hoc share.
 
-Until the size correction is done, the F12 numbers are directional and should not be quoted as
-measurements.
+The size correction has since been done for the one metric that needed it, by multinomial
+rarefaction to the target's token count — and it removed most of the type-count effect while
+leaving the mass-share effect intact. See the corrected table in F12. What remains open is
+generalising that: any concentration statistic this repo adds must be rarefied by construction,
+not corrected afterwards, and the type-token curve must be sampled at matched sizes rather than
+compared at native ones.
