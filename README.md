@@ -6,7 +6,7 @@ It harvests the prose half of local Claude Code transcripts, tokenizes it identi
 human-written reference corpora, and ranks the vocabulary by how far each word's rate departs
 from **all** of them.
 
-**[Read the report →](https://claude.ai/code/artifact/173e7488-ac54-4718-b2c9-72b5126a90fe)**
+**[Read the report →](https://claude.ai/code/artifact/6f2b4326-b035-43bd-ae74-8638281fb10c)**
 — the findings, the corrections that produced them, and what the method is blind to.
 
 **This is not a detector.** It compares aggregate rates between corpora. There is no

@@ -1018,6 +1018,6 @@ def build() -> str:
 
 
 if __name__ == "__main__":
-    destination = OUTPUT_DIR / "zipf-report.html"
+    destination = OUTPUT_DIR / "let-me-corpus.html"
     destination.write_text(build(), encoding="utf-8")
     print(f"wrote {destination}")
