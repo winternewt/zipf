@@ -288,3 +288,36 @@ both belong to `ROADMAP.md` RM10.
 lower bound, never a measurement. Establish the family or the frame first, then measure. All
 three misses in this session were caught by the user rather than by the tool, which is the part
 that should be uncomfortable.
+
+### F14, the strongest case: `worth [gerund]`
+
+`worth separating` occurs zero times, so as a string it is nothing. As a frame it is the largest
+template found so far:
+
+| unit | rate | distinct fills |
+|---|---:|---:|
+| `worth` (the word) | 885 /M — 5.5x general English | — |
+| `worth [anything]` | **906 /M** | 69 |
+| `worth [gerund]` | **672 /M** | 60 verbs |
+
+Individual fills, against the best of 286 million words of human writing:
+
+| fill | Claude /M | best human /M |
+|---|---:|---:|
+| `worth flagging` | 124 | **0.00** |
+| `worth knowing` | 105 | 1.15 |
+| `worth noting` | 60 | 8.03 |
+| `worth fixing` · `worth deciding` · `worth naming` · `worth recording` · `worth stating` · `worth pinning` · `worth confirming` | 17-31 each | all below the candidate floor |
+
+`worth flagging` does not occur once in any reference corpus.
+
+And one level up it is not a phrase at all but a **reply-structuring device**: `two things worth
+…` at 83 per million, `one thing worth …` at 56, `things worth your attention` at 39, `one caveat
+worth …` at 20. The habit is announcing the shape of an answer before giving it — the same
+instinct as `let me`, which announces an action before performing it.
+
+The cartoon's caption for this was *"two sides (and it's worth separating them)"*. That is not a
+quotation of any string in the corpus. It is an accurate parody of a template, arrived at by
+someone who had read enough of the output to internalise the frame and none of the frequency
+tables. Which is the sharpest thing in this whole finding: **a reader inferred a construction the
+tool cannot represent, from the same evidence the tool had.**
