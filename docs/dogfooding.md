@@ -246,3 +246,45 @@ whose own register is terse and technical. Register is negotiated between both p
 measures a *relationship*, not a model. The same instrument pointed at sessions with a different
 user could easily produce the opposite table, and nothing here licenses a claim about Claude
 Code in general.
+
+## F14 — measuring a string instead of a construction, three times running
+
+*found:* the user catching the third instance · *status:* open · *class:* **method error, and
+the mirror image of F12**
+
+Three probes in this session tested a surface string where the thing worth measuring was a
+family, and each time the reported figure was too small:
+
+| probed as | reported | measured as a family | understated by |
+|---|---:|---:|---:|
+| `sharp` (bare token) | 1.0x | `sharp/sharply/sharper/sharpen` | **2.2x** |
+| `seams` (bare token) | 2.0x | `seam/seams/seamless/seamlessly` | **4.7x** |
+| `full picture` (one bigram) | 91 /M | every `<modifier> picture` bigram | **263 /M** |
+
+The third is the instructive one. `full picture` is a phrase; what Claude actually has is a
+**productive template** — `[modifier] picture` as a way of saying "understanding" — filled 110
+times with 23 different modifiers:
+
+> full · complete · clear · real · thorough · verified · solid · strong · digest · unified ·
+> reconciled · structural · code-grounded · evidence-based · corrected · bigger · cost · design ·
+> memory · codebase · display
+
+Almost none of these exist in the reference corpora at all: `complete picture`, `thorough
+picture` and `verified picture` are all below the candidate floor across 286 million words of
+human writing.
+
+And the modifier is the real tic, not the noun. `picture` is only 1.9x general English, while
+**`full` is 4.1x** (1,662 per million against 404) and `complete` is 4.3x. `full suite` runs at
+397 per million against 0.96 — **414x**. The caricature named the restaurant correctly.
+
+**Why this is the mirror of F12, and why one fix serves both.** F12 found usage *piled into few
+types* — 327 adverbs doing the work of 5,000. This finds the opposite shape: one frame filled
+with many one-off variants, so every variant falls below the reporting floor and the template
+that generates them is invisible. A word-by-word ranking cannot see either. Both are
+concentration measurements against different units — types per class, and fills per frame — and
+both belong to `ROADMAP.md` RM10.
+
+**The standing correction to how probes are run here:** a probe against a surface string is a
+lower bound, never a measurement. Establish the family or the frame first, then measure. All
+three misses in this session were caught by the user rather than by the tool, which is the part
+that should be uncomfortable.
